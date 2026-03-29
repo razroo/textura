@@ -1520,10 +1520,22 @@ function drawFpsOverlay(ctx: CanvasRenderingContext2D, panelW: number, frameTime
   ctx.restore()
 }
 
+// ── Routing ───────────────────────────────────────────────────
+
+const validScenarios = new Set<ScenarioKey>(['chat', 'cards', 'i18n', 'article', 'stress', 'morph', 'vscroll', 'editor'])
+
+function getScenarioFromHash(): ScenarioKey | null {
+  const hash = location.hash.replace('#', '')
+  return validScenarios.has(hash as ScenarioKey) ? hash as ScenarioKey : null
+}
+
+function setHashFromScenario(scenario: ScenarioKey) {
+  history.replaceState(null, '', `#${scenario}`)
+}
+
 // ── Events ─────────────────────────────────────────────────────
 
-function onScenarioChange() {
-  const scenario = scenarioSelect.value as ScenarioKey
+function activateScenario(scenario: ScenarioKey) {
   stopMorph()
   stopVScroll()
 
@@ -1547,7 +1559,27 @@ function onScenarioChange() {
   }
 }
 
-render()
+function onScenarioChange() {
+  const scenario = scenarioSelect.value as ScenarioKey
+  setHashFromScenario(scenario)
+  activateScenario(scenario)
+}
+
+// Apply initial scenario from hash or default
+const initialScenario = getScenarioFromHash()
+if (initialScenario) {
+  scenarioSelect.value = initialScenario
+}
+setHashFromScenario(scenarioSelect.value as ScenarioKey)
+activateScenario(scenarioSelect.value as ScenarioKey)
+
+window.addEventListener('hashchange', () => {
+  const scenario = getScenarioFromHash()
+  if (scenario && scenario !== scenarioSelect.value) {
+    scenarioSelect.value = scenario
+    activateScenario(scenario)
+  }
+})
 
 widthSlider.addEventListener('input', () => {
   widthLabel.textContent = `${widthSlider.value}px`
