@@ -280,8 +280,8 @@ const scrollMessages: Message[] = Array.from({ length: VSCROLL_ITEM_COUNT }, (_,
   time: `${9 + Math.floor((i * 3) % 12)}:${String((i * 7) % 60).padStart(2, '0')}`,
 }))
 
-type ScenarioKey = 'chat' | 'cards' | 'i18n' | 'article' | 'stress' | 'morph' | 'vscroll' | 'editor'
-const builders: Record<Exclude<ScenarioKey, 'vscroll' | 'editor'>, (w: number, fs: number) => BoxNode> = {
+type ScenarioKey = 'chat' | 'cards' | 'i18n' | 'article' | 'stress' | 'morph' | 'vscroll' | 'editor' | 'aistream'
+const builders: Record<Exclude<ScenarioKey, 'vscroll' | 'editor' | 'aistream'>, (w: number, fs: number) => BoxNode> = {
   chat: buildChatTree, cards: buildCardsTree, i18n: buildI18nTree,
   article: buildArticleTree, stress: buildStressTree, morph: buildMorphTree,
 }
@@ -423,7 +423,7 @@ function renderLayout(
   const isAvatar = !isText && layout.children.length === 0 && w >= 20 && w <= 36 && h >= 20 && h <= 36
 
   // Card background
-  if (hasCardStyle && (scenario === 'chat' || scenario === 'i18n' || scenario === 'stress' || scenario === 'morph')) {
+  if (hasCardStyle && (scenario === 'chat' || scenario === 'i18n' || scenario === 'stress' || scenario === 'morph' || scenario === 'aistream')) {
     ctx.fillStyle = palette.card
     roundRect(ctx, x, y, w, h, 6)
     ctx.fill()
@@ -433,9 +433,10 @@ function renderLayout(
     ctx.stroke()
   }
 
-  // Card bg for "cards" / "morph" scenario
+  // Card bg for "cards" / "morph" / "aistream" scenario
   if ((scenario === 'cards' && 'padding' in tree && tree.padding === 16 && !isText) ||
-      (scenario === 'morph' && 'padding' in tree && (tree.padding === 14 || tree.padding === 12) && !isText && layout.children.length > 0 && layout.children.length <= 3)) {
+      (scenario === 'morph' && 'padding' in tree && (tree.padding === 14 || tree.padding === 12) && !isText && layout.children.length > 0 && layout.children.length <= 3) ||
+      (scenario === 'aistream' && 'padding' in tree && (tree.padding === 14 || tree.padding === 16) && !isText && layout.children.length > 0 && layout.children.length <= 3)) {
     ctx.fillStyle = palette.card
     roundRect(ctx, x, y, w, h, 8)
     ctx.fill()
@@ -597,6 +598,9 @@ const insights: Record<ScenarioKey, string> = {
   editor: `<p><strong>This is the technology behind the next generation of design tools.</strong> Every element on this poster — titles, body text, feature cards, statistics, pull quotes — is laid out using Textura's flexbox engine with pixel-perfect text measurement. The entire layout computation happens in under 1ms. Zero DOM nodes are used.</p>
 <p>Drag the blue resize handle on the right edge of the poster (Textura side). Watch cards reflow from 3 columns to 2 to 1. Watch text re-wrap across every container. Watch heights auto-adjust and siblings reposition. This is what Canva, Figma, and every canvas-based design editor has struggled with: <strong>accurate text-aware auto-layout without the DOM</strong>. With Textura, it's a single function call.</p>`,
 
+  aistream: `<p><strong>The AI layout problem.</strong> Every AI product — ChatGPT, Notion AI, Cursor — streams tokens into the UI. The layout needs to update on every token: text grows, paragraphs expand, cards appear, sections push content down. With DOM-based layout, each token triggers a synchronous reflow. For complex documents with cards, stats, and mixed content, this becomes visibly janky.</p>
+<p>Textura's cached hot path makes per-token relayout nearly free. After the initial <code>prepare()</code>, every subsequent layout is pure arithmetic over cached segment widths. Watch the left side: Yoga's height estimates jump as text grows, causing content below to shift unpredictably. The right side stays perfectly stable — every token produces a correct layout. This enables AI products to stream into <strong>rich, designed layouts</strong> (not just plain text) with zero layout shift.</p>`,
+
   morph: `<p><strong>This is the demo neither Yoga nor Pretext can do alone.</strong> A complete dashboard UI is being continuously re-laid-out at 60fps as the width sweeps from 320px to 900px and back. Every single frame: Yoga computes the flex layout, Pretext measures all text at the new available widths, boxes resize, cards reflow from 1 to 2 to 3 columns — all in under 1ms.</p>
 <p><strong>Yoga alone</strong> (left) can compute the flex layout but has to guess text heights. Watch the red overflow zones — text spills out of its boxes at every width, and the errors compound as cards reflow. <strong>Pretext alone</strong> can measure text but has no layout engine — it can't compute where boxes go. <strong>The DOM</strong> can't do this at 60fps — continuous relayout triggers synchronous reflow on every frame, dropping to 15–20fps on complex layouts. Only Textura combines both engines to make this possible.</p>`,
 }
@@ -656,7 +660,7 @@ function measureWithDOM(tree: BoxNode | TextNode, containerWidth: number, fontSi
 
 function render() {
   const scenario = scenarioSelect.value as ScenarioKey
-  if (scenario === 'vscroll' || scenario === 'editor') return
+  if (scenario === 'vscroll' || scenario === 'editor' || scenario === 'aistream') return
   const containerWidth = parseInt(widthSlider.value)
   const fontSize = parseInt(fontSlider.value)
 
@@ -1379,6 +1383,314 @@ document.addEventListener('mouseup', () => {
   }
 })
 
+// ── AI Streaming ──────────────────────────────────────────────
+
+// The full AI-generated report — streamed token by token
+interface StreamSection {
+  type: 'heading' | 'subheading' | 'paragraph' | 'kpi-row' | 'cards-row'
+  text?: string                   // for heading/subheading/paragraph
+  items?: { label: string; value: string; body?: string }[]  // for kpi-row/cards-row
+}
+
+const aiReportSections: StreamSection[] = [
+  { type: 'heading', text: 'Q4 Performance Analysis' },
+  { type: 'subheading', text: 'AI-Generated Report — Streaming in Real Time' },
+  { type: 'paragraph', text: 'This report was generated by analyzing 2.4 million data points across product usage, revenue metrics, and customer feedback. All findings are computed with 95% confidence intervals. The layout you see is being built token by token, with Textura recomputing the full flexbox layout on every single token — titles, cards, statistics, and paragraphs all reflow in under 1ms.' },
+  { type: 'kpi-row', items: [
+    { label: 'Revenue', value: '$12.4M' },
+    { label: 'Active Users', value: '847K' },
+    { label: 'Retention', value: '94.2%' },
+    { label: 'NPS Score', value: '72' },
+  ]},
+  { type: 'paragraph', text: 'Revenue grew 23% quarter-over-quarter, driven primarily by enterprise expansion. The APAC region showed the strongest growth at 41%, while North America remained the largest market by absolute revenue. Customer acquisition cost decreased 12% due to improved organic channels and referral programs.' },
+  { type: 'cards-row', items: [
+    { label: 'Expand APAC Presence', value: 'High Priority', body: 'The APAC market showed 41% growth with minimal marketing spend. Recommend doubling investment in localization and regional partnerships to capture the growing demand.' },
+    { label: 'Mobile Experience', value: 'Medium Priority', body: 'Mobile usage grew to 62% of total sessions but conversion remains 34% lower than desktop. A dedicated mobile optimization sprint would close this gap.' },
+    { label: 'Enterprise Onboarding', value: 'High Priority', body: 'Enterprise deal cycle shortened from 45 to 28 days after the new onboarding flow launched. Further automation of provisioning could reduce this to under 14 days.' },
+  ]},
+  { type: 'paragraph', text: 'Looking ahead to Q1, the primary risk is infrastructure scaling. Current architecture supports 1.2M concurrent users, but projected growth suggests we will hit 1.8M by March. The engineering team has proposed a migration to edge computing that would raise the ceiling to 5M while reducing p99 latency from 180ms to under 50ms. This migration is estimated at 6 engineering-weeks and should be prioritized immediately.' },
+]
+
+// Flatten all text into a token stream with section markers
+interface StreamToken {
+  sectionIdx: number
+  itemIdx?: number    // for kpi/cards items
+  field: 'text' | 'label' | 'value' | 'body'
+  word: string
+  wordIdx: number
+  totalWords: number
+}
+
+function buildTokenStream(): StreamToken[] {
+  const tokens: StreamToken[] = []
+  for (let si = 0; si < aiReportSections.length; si++) {
+    const sec = aiReportSections[si]!
+    if (sec.text) {
+      const words = sec.text.split(' ')
+      for (let wi = 0; wi < words.length; wi++) {
+        tokens.push({ sectionIdx: si, field: 'text', word: words[wi]!, wordIdx: wi, totalWords: words.length })
+      }
+    }
+    if (sec.items) {
+      for (let ii = 0; ii < sec.items.length; ii++) {
+        const item = sec.items[ii]!
+        // Value and label come as single tokens
+        tokens.push({ sectionIdx: si, itemIdx: ii, field: 'value', word: item.value, wordIdx: 0, totalWords: 1 })
+        const labelWords = item.label.split(' ')
+        for (let wi = 0; wi < labelWords.length; wi++) {
+          tokens.push({ sectionIdx: si, itemIdx: ii, field: 'label', word: labelWords[wi]!, wordIdx: wi, totalWords: labelWords.length })
+        }
+        if (item.body) {
+          const bodyWords = item.body.split(' ')
+          for (let wi = 0; wi < bodyWords.length; wi++) {
+            tokens.push({ sectionIdx: si, itemIdx: ii, field: 'body', word: bodyWords[wi]!, wordIdx: wi, totalWords: bodyWords.length })
+          }
+        }
+      }
+    }
+  }
+  return tokens
+}
+
+const aiTokenStream = buildTokenStream()
+
+// State tracking for streamed content
+let aiStreamIntervalId: ReturnType<typeof setInterval> | null = null
+let aiStreamTokenIdx = 0
+let aiStreamTexts: Map<string, string> = new Map() // key -> accumulated text
+let aiStreamPrevYogaHeights: Map<number, number> = new Map() // section idx -> last yoga height
+let aiStreamShiftCount = 0
+let aiStreamLastLayoutTime = 0
+
+function aiStreamKey(token: StreamToken): string {
+  if (token.itemIdx !== undefined) return `${token.sectionIdx}-${token.itemIdx}-${token.field}`
+  return `${token.sectionIdx}-${token.field}`
+}
+
+function buildAiStreamTree(w: number, fontSize: number): BoxNode {
+  const innerPad = 24
+  const innerW = w - innerPad * 2
+  const children: (BoxNode | TextNode)[] = []
+
+  for (let si = 0; si <= Math.min(aiReportSections.length - 1, getMaxVisibleSection()); si++) {
+    const sec = aiReportSections[si]!
+
+    if (sec.type === 'heading') {
+      const text = aiStreamTexts.get(`${si}-text`) ?? ''
+      if (text) children.push({ text, font: `700 ${fontSize + 10}px Inter`, lineHeight: Math.round((fontSize + 10) * 1.25) } satisfies TextNode)
+    } else if (sec.type === 'subheading') {
+      const text = aiStreamTexts.get(`${si}-text`) ?? ''
+      if (text) children.push({ text, font: `${fontSize}px Inter`, lineHeight: Math.round(fontSize * 1.5) } satisfies TextNode)
+    } else if (sec.type === 'paragraph') {
+      const text = aiStreamTexts.get(`${si}-text`) ?? ''
+      if (text) children.push({ text, font: `${fontSize}px Inter`, lineHeight: Math.round(fontSize * 1.6), marginBottom: 8 } satisfies TextNode)
+    } else if (sec.type === 'kpi-row' && sec.items) {
+      const kpiCards: BoxNode[] = []
+      const cols = w >= 500 ? 4 : 2
+      const kpiW = (innerW - 10 * (cols - 1)) / cols
+      for (let ii = 0; ii < sec.items.length; ii++) {
+        const val = aiStreamTexts.get(`${si}-${ii}-value`) ?? ''
+        const label = aiStreamTexts.get(`${si}-${ii}-label`) ?? ''
+        if (!val && !label) continue
+        const kpiChildren: (BoxNode | TextNode)[] = []
+        if (val) kpiChildren.push({ text: val, font: `700 ${fontSize + 6}px Inter`, lineHeight: Math.round((fontSize + 6) * 1.2) } satisfies TextNode)
+        if (label) kpiChildren.push({ text: label, font: `${fontSize - 2}px Inter`, lineHeight: Math.round((fontSize - 2) * 1.4) } satisfies TextNode)
+        kpiCards.push({ flexDirection: 'column', width: kpiW, padding: 14, gap: 4, alignItems: 'center', children: kpiChildren })
+      }
+      if (kpiCards.length > 0) {
+        children.push({ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 8, children: kpiCards } satisfies BoxNode)
+      }
+    } else if (sec.type === 'cards-row' && sec.items) {
+      const cards: BoxNode[] = []
+      const cols = w >= 550 ? 3 : w >= 380 ? 2 : 1
+      const cardW = (innerW - 12 * (cols - 1)) / cols
+      for (let ii = 0; ii < sec.items.length; ii++) {
+        const val = aiStreamTexts.get(`${si}-${ii}-value`) ?? ''
+        const label = aiStreamTexts.get(`${si}-${ii}-label`) ?? ''
+        const body = aiStreamTexts.get(`${si}-${ii}-body`) ?? ''
+        if (!val && !label && !body) continue
+        const cardChildren: (BoxNode | TextNode)[] = []
+        if (val) cardChildren.push({ text: val, font: `600 ${fontSize - 2}px Inter`, lineHeight: Math.round((fontSize - 2) * 1.3) } satisfies TextNode)
+        if (label) cardChildren.push({ text: label, font: `600 ${fontSize}px Inter`, lineHeight: Math.round(fontSize * 1.3) } satisfies TextNode)
+        if (body) cardChildren.push({ text: body, font: `${fontSize - 1}px Inter`, lineHeight: Math.round((fontSize - 1) * 1.55) } satisfies TextNode)
+        cards.push({ flexDirection: 'column', width: cardW, padding: 16, gap: 6, children: cardChildren })
+      }
+      if (cards.length > 0) {
+        children.push({ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 8, children: cards } satisfies BoxNode)
+      }
+    }
+  }
+
+  return { width: w, flexDirection: 'column', padding: innerPad, gap: 10, children }
+}
+
+function getMaxVisibleSection(): number {
+  let max = -1
+  for (const key of aiStreamTexts.keys()) {
+    const si = parseInt(key.split('-')[0]!)
+    if (si > max) max = si
+  }
+  return max
+}
+
+function renderAiStream() {
+  const containerWidth = parseInt(widthSlider.value)
+  const fontSize = parseInt(fontSlider.value)
+  const tree = buildAiStreamTree(containerWidth, fontSize)
+
+  const t0 = performance.now()
+  const texturaLayout = computeLayout(tree, { width: containerWidth })
+  aiStreamLastLayoutTime = performance.now() - t0
+
+  const { layout: yogaLayout, time: yogaTime } = yogaLayoutTree(tree, containerWidth, fontSize)
+
+  // Track layout shifts on the Yoga side
+  // Compare per-section heights to previous frame
+  function measureSectionHeights(layout: ComputedLayout): Map<number, number> {
+    const heights = new Map<number, number>()
+    for (let i = 0; i < layout.children.length; i++) {
+      heights.set(i, layout.children[i]!.height)
+    }
+    return heights
+  }
+  const yogaSectionHeights = measureSectionHeights(yogaLayout)
+  for (const [idx, h] of yogaSectionHeights) {
+    const prev = aiStreamPrevYogaHeights.get(idx)
+    if (prev !== undefined && Math.abs(prev - h) > 3) {
+      aiStreamShiftCount++
+    }
+  }
+  aiStreamPrevYogaHeights = yogaSectionHeights
+
+  // Render
+  const maxHeight = Math.max(texturaLayout.height, yogaLayout.height, 200)
+  const canvasH = Math.min(maxHeight + 20, 800)
+
+  const ctxY = setupCanvas(canvasYoga, canvasH)
+  const ctxT = setupCanvas(canvasTextura, canvasH)
+  const panelW = canvasYoga.clientWidth
+  const offsetX = Math.max(0, (panelW - containerWidth) / 2)
+
+  // Backgrounds
+  ctxY.fillStyle = palette.bg
+  ctxY.fillRect(0, 0, panelW, canvasH)
+  ctxT.fillStyle = palette.bg
+  ctxT.fillRect(0, 0, panelW, canvasH)
+
+  // Use the editor-style poster rendering for a clean look
+  renderLayout(ctxY, yogaLayout, tree, offsetX, 10, 'aistream', true)
+  renderLayout(ctxT, texturaLayout, tree, offsetX, 10, 'aistream', false)
+
+  // Streaming cursor on textura side (blinking block at end of last text)
+  if (aiStreamTokenIdx < aiTokenStream.length) {
+    drawStreamCursor(ctxT, texturaLayout, offsetX, 10)
+  }
+
+  // Stats overlays
+  drawFpsOverlay(ctxY, panelW, yogaTime, 'Yoga')
+  drawFpsOverlay(ctxT, panelW, aiStreamLastLayoutTime, 'Textura')
+
+  // Update DOM stats
+  document.getElementById('yoga-time')!.textContent = `Layout: ${yogaTime.toFixed(2)}ms (estimated)`
+  document.getElementById('yoga-nodes')!.textContent = `Height: ${Math.round(yogaLayout.height)}px`
+  document.getElementById('textura-time')!.textContent = `Layout: ${aiStreamLastLayoutTime.toFixed(2)}ms (accurate)`
+  document.getElementById('textura-nodes')!.textContent = `Height: ${Math.round(texturaLayout.height)}px`
+
+  const overlaps = countOverlaps(yogaLayout, tree, ctxY)
+  const heightDiff = Math.abs(texturaLayout.height - yogaLayout.height)
+
+  document.getElementById('stat-overlap')!.textContent = `${overlaps}`
+  document.getElementById('stat-height-diff')!.textContent = `${Math.round(heightDiff)}px`
+  document.getElementById('stat-resize-time')!.textContent = `${aiStreamLastLayoutTime.toFixed(2)}ms`
+  document.getElementById('stat-dom-time')!.textContent = `${aiStreamTokenIdx}`
+
+  // Update aistream bar
+  document.getElementById('aistream-tokens')!.textContent = `${aiStreamTokenIdx}`
+  document.getElementById('aistream-layout-time')!.textContent = `${aiStreamLastLayoutTime.toFixed(2)}ms`
+  document.getElementById('aistream-shift')!.textContent = `${aiStreamShiftCount}`
+  const pct = (aiStreamTokenIdx / aiTokenStream.length) * 100
+  document.getElementById('aistream-progress')!.style.width = `${pct}%`
+
+  document.getElementById('insight-text')!.innerHTML = insights['aistream']
+}
+
+function drawStreamCursor(ctx: CanvasRenderingContext2D, layout: ComputedLayout, ox: number, oy: number) {
+  // Find the last text node in the layout tree
+  function findLastText(l: ComputedLayout, px: number, py: number): { x: number; y: number; h: number } | null {
+    const ax = px + l.x
+    const ay = py + l.y
+    if (l.text !== undefined) {
+      return { x: ax + l.width, y: ay, h: l.height }
+    }
+    for (let i = l.children.length - 1; i >= 0; i--) {
+      const r = findLastText(l.children[i]!, ax, ay)
+      if (r) return r
+    }
+    return null
+  }
+  const pos = findLastText(layout, ox, oy)
+  if (!pos) return
+
+  // Blinking cursor
+  if (Math.floor(performance.now() / 500) % 2 === 0) {
+    ctx.fillStyle = '#e94560'
+    ctx.fillRect(pos.x + 2, pos.y + 2, 2, Math.min(pos.h - 4, 18))
+  }
+}
+
+function startAiStream() {
+  document.getElementById('aistream-bar')!.classList.add('active')
+  const btn = document.getElementById('aistream-btn')!
+
+  if (aiStreamIntervalId !== null) {
+    // Stop
+    stopAiStream()
+    return
+  }
+
+  // Reset
+  aiStreamTokenIdx = 0
+  aiStreamTexts.clear()
+  aiStreamPrevYogaHeights.clear()
+  aiStreamShiftCount = 0
+  aiStreamLastLayoutTime = 0
+
+  btn.textContent = 'Stop'
+  btn.classList.add('running')
+
+  renderAiStream()
+
+  // Stream at ~40 tokens/second (realistic LLM speed)
+  aiStreamIntervalId = setInterval(() => {
+    if (aiStreamTokenIdx >= aiTokenStream.length) {
+      stopAiStream()
+      return
+    }
+
+    // Process 1-2 tokens per tick for natural feel
+    const tokensPerTick = 1 + (aiStreamTokenIdx % 3 === 0 ? 1 : 0)
+    for (let t = 0; t < tokensPerTick && aiStreamTokenIdx < aiTokenStream.length; t++) {
+      const token = aiTokenStream[aiStreamTokenIdx]!
+      const key = aiStreamKey(token)
+      const prev = aiStreamTexts.get(key) ?? ''
+      aiStreamTexts.set(key, prev ? `${prev} ${token.word}` : token.word)
+      aiStreamTokenIdx++
+    }
+
+    renderAiStream()
+  }, 25)
+}
+
+function stopAiStream() {
+  if (aiStreamIntervalId !== null) {
+    clearInterval(aiStreamIntervalId)
+    aiStreamIntervalId = null
+  }
+  const btn = document.getElementById('aistream-btn')!
+  btn.textContent = aiStreamTokenIdx >= aiTokenStream.length ? 'Replay' : 'Generate'
+  btn.classList.remove('running')
+}
+
 // ── Morph animation ───────────────────────────────────────────
 
 let morphRafId: number | null = null
@@ -1522,7 +1834,7 @@ function drawFpsOverlay(ctx: CanvasRenderingContext2D, panelW: number, frameTime
 
 // ── Routing ───────────────────────────────────────────────────
 
-const validScenarios = new Set<ScenarioKey>(['chat', 'cards', 'i18n', 'article', 'stress', 'morph', 'vscroll', 'editor'])
+const validScenarios = new Set<ScenarioKey>(['chat', 'cards', 'i18n', 'article', 'stress', 'morph', 'vscroll', 'editor', 'aistream'])
 
 function getScenarioFromHash(): ScenarioKey | null {
   const hash = location.hash.replace('#', '')
@@ -1538,6 +1850,8 @@ function setHashFromScenario(scenario: ScenarioKey) {
 function activateScenario(scenario: ScenarioKey) {
   stopMorph()
   stopVScroll()
+  stopAiStream()
+  document.getElementById('aistream-bar')!.classList.remove('active')
 
   if (scenario === 'morph') {
     widthSlider.disabled = true
@@ -1552,6 +1866,16 @@ function activateScenario(scenario: ScenarioKey) {
     widthSlider.style.opacity = '1'
     editorPosterWidth = parseInt(widthSlider.value)
     renderEditor()
+  } else if (scenario === 'aistream') {
+    widthSlider.disabled = false
+    widthSlider.style.opacity = '1'
+    document.getElementById('aistream-bar')!.classList.add('active')
+    // Reset and show empty state
+    aiStreamTokenIdx = 0
+    aiStreamTexts.clear()
+    aiStreamPrevYogaHeights.clear()
+    aiStreamShiftCount = 0
+    renderAiStream()
   } else {
     widthSlider.disabled = false
     widthSlider.style.opacity = '1'
@@ -1592,6 +1916,8 @@ widthSlider.addEventListener('input', () => {
   } else if (scenarioSelect.value === 'editor') {
     editorPosterWidth = parseInt(widthSlider.value)
     renderEditor()
+  } else if (scenarioSelect.value === 'aistream') {
+    renderAiStream()
   } else {
     render()
   }
@@ -1600,6 +1926,7 @@ widthSlider.addEventListener('input', () => {
 fontSlider.addEventListener('input', () => {
   fontLabel.textContent = `${fontSlider.value}px`
   if (scenarioSelect.value === 'morph') return
+  if (scenarioSelect.value === 'aistream') { renderAiStream(); return }
   if (scenarioSelect.value === 'vscroll') {
     const w = parseInt(widthSlider.value)
     const fs = parseInt(fontSlider.value)
@@ -1618,6 +1945,7 @@ window.addEventListener('resize', () => {
   if (scenarioSelect.value === 'morph') return
   if (scenarioSelect.value === 'vscroll') { renderVScroll(); return }
   if (scenarioSelect.value === 'editor') { renderEditor(); return }
+  if (scenarioSelect.value === 'aistream') { renderAiStream(); return }
   render()
 })
 
@@ -1646,3 +1974,6 @@ document.getElementById('vscroll-jump-input')!.addEventListener('keydown', (e) =
     document.getElementById('vscroll-jump-btn')!.click()
   }
 })
+
+// AI stream generate button
+document.getElementById('aistream-btn')!.addEventListener('click', startAiStream)

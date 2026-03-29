@@ -318,6 +318,57 @@
       cursor: pointer;
     }
     .vscroll-jump button:hover { background: #d13a54; }
+
+    .aistream-bar {
+      max-width: 1400px;
+      margin: 0 auto 24px;
+      padding: 0 24px;
+      display: none;
+    }
+    .aistream-bar.active { display: block; }
+    .aistream-inner {
+      background: linear-gradient(135deg, #0f1a2e 0%, #18181b 100%);
+      border: 1px solid #27272a;
+      border-radius: 12px;
+      padding: 20px 28px;
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      flex-wrap: wrap;
+    }
+    .aistream-btn {
+      background: #e94560;
+      border: none;
+      color: #fff;
+      border-radius: 8px;
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      font-family: Inter, sans-serif;
+      cursor: pointer;
+      min-width: 110px;
+      text-align: center;
+    }
+    .aistream-btn:hover { background: #d13a54; }
+    .aistream-btn.running { background: #52525b; }
+    .aistream-progress {
+      flex: 1;
+      min-width: 120px;
+    }
+    .aistream-progress-track {
+      height: 6px;
+      background: #27272a;
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 6px;
+    }
+    .aistream-progress-fill {
+      height: 100%;
+      background: #e94560;
+      border-radius: 3px;
+      width: 0%;
+      transition: width 0.05s linear;
+    }
   </style>
 </head>
 <body>
@@ -339,6 +390,7 @@
         <option value="morph">Responsive Morph (60fps)</option>
         <option value="vscroll">Virtual Scroll (10k items)</option>
         <option value="editor">Design Editor (drag to resize)</option>
+        <option value="aistream">AI Streaming Report</option>
       </select>
     </div>
     <div class="control-group">
@@ -374,6 +426,28 @@
       <div class="panel-footer">
         <span id="textura-time">—</span>
         <span id="textura-nodes">—</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="aistream-bar" id="aistream-bar">
+    <div class="aistream-inner">
+      <button class="aistream-btn" id="aistream-btn">Generate</button>
+      <div class="vscroll-stat">
+        <div class="vscroll-stat-value good" id="aistream-tokens">0</div>
+        <div class="vscroll-stat-label">Tokens streamed</div>
+      </div>
+      <div class="vscroll-stat">
+        <div class="vscroll-stat-value good" id="aistream-layout-time">—</div>
+        <div class="vscroll-stat-label">Layout per token</div>
+      </div>
+      <div class="vscroll-stat">
+        <div class="vscroll-stat-value bad" id="aistream-shift">0</div>
+        <div class="vscroll-stat-label">Yoga layout shifts</div>
+      </div>
+      <div class="aistream-progress">
+        <div class="vscroll-stat-label">Progress</div>
+        <div class="aistream-progress-track"><div class="aistream-progress-fill" id="aistream-progress"></div></div>
       </div>
     </div>
   </div>
