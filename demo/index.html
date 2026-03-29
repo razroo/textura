@@ -181,6 +181,72 @@
       letter-spacing: 0.05em;
       margin-top: 6px;
     }
+
+    .morph-bar {
+      max-width: 1400px;
+      margin: 0 auto 24px;
+      padding: 0 24px;
+      display: none;
+    }
+    .morph-bar.active { display: block; }
+    .morph-inner {
+      background: linear-gradient(135deg, #0f1a2e 0%, #18181b 100%);
+      border: 1px solid #27272a;
+      border-radius: 12px;
+      padding: 20px 28px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+    .morph-fps {
+      font-size: 36px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      min-width: 100px;
+    }
+    .morph-fps.good { color: #4ade80; }
+    .morph-fps.ok { color: #fb923c; }
+    .morph-fps.bad { color: #ef4444; }
+    .morph-fps-label {
+      font-size: 11px;
+      color: #71717a;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .morph-width-bar {
+      flex: 1;
+      height: 6px;
+      background: #27272a;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .morph-width-fill {
+      height: 100%;
+      background: #e94560;
+      border-radius: 3px;
+      transition: width 0.016s linear;
+    }
+    .morph-width-label {
+      font-size: 13px;
+      color: #a1a1aa;
+      font-variant-numeric: tabular-nums;
+      min-width: 60px;
+      text-align: right;
+    }
+    .morph-frame-graph {
+      display: flex;
+      align-items: flex-end;
+      gap: 1px;
+      height: 40px;
+    }
+    .morph-frame-graph .bar {
+      width: 3px;
+      background: #4ade80;
+      border-radius: 1px 1px 0 0;
+      min-height: 1px;
+    }
+    .morph-frame-graph .bar.slow { background: #fb923c; }
+    .morph-frame-graph .bar.jank { background: #ef4444; }
   </style>
 </head>
 <body>
@@ -199,6 +265,7 @@
         <option value="i18n">Multilingual Feed</option>
         <option value="article">Article Layout</option>
         <option value="stress">Stress Test (200 items)</option>
+        <option value="morph">Responsive Morph (60fps)</option>
       </select>
     </div>
     <div class="control-group">
@@ -234,6 +301,26 @@
       <div class="panel-footer">
         <span id="textura-time">—</span>
         <span id="textura-nodes">—</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="morph-bar" id="morph-bar">
+    <div class="morph-inner">
+      <div>
+        <div class="morph-fps good" id="morph-fps">—</div>
+        <div class="morph-fps-label">FPS (Textura)</div>
+      </div>
+      <div style="flex:1">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+          <span style="font-size:11px;color:#71717a;text-transform:uppercase;letter-spacing:0.05em">Animated width</span>
+          <span class="morph-width-label" id="morph-width-label">—</span>
+        </div>
+        <div class="morph-width-bar"><div class="morph-width-fill" id="morph-width-fill" style="width:50%"></div></div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:#71717a;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Frame times</div>
+        <div class="morph-frame-graph" id="morph-frame-graph"></div>
       </div>
     </div>
   </div>

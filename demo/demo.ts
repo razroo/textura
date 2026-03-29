@@ -1,17 +1,14 @@
 import { init, computeLayout } from '../src/index.js'
 import type { ComputedLayout, BoxNode, TextNode } from '../src/index.js'
 import { loadYoga, FlexDirection, Edge, Gutter, Align, Justify, Wrap, Direction, MeasureMode } from 'yoga-layout/load'
-import type { Yoga, Node } from 'yoga-layout'
+import type { Node } from 'yoga-layout'
 
 // ── Init ───────────────────────────────────────────────────────
-const [, yogaEngine] = await Promise.all([init(), loadYoga()])
-const Yoga: Yoga = yogaEngine
+const [, Yoga] = await Promise.all([init(), loadYoga()])
 
 // ── DOM refs ───────────────────────────────────────────────────
 const canvasYoga = document.getElementById('canvas-yoga') as HTMLCanvasElement
 const canvasTextura = document.getElementById('canvas-textura') as HTMLCanvasElement
-const ctxY = canvasYoga.getContext('2d')!
-const ctxT = canvasTextura.getContext('2d')!
 const widthSlider = document.getElementById('width-slider') as HTMLInputElement
 const widthLabel = document.getElementById('width-label') as HTMLSpanElement
 const fontSlider = document.getElementById('font-slider') as HTMLInputElement
@@ -155,10 +152,100 @@ function buildStressTree(w: number, fontSize: number): BoxNode {
   return { width: w, flexDirection: 'column', padding: 8, gap: 2, children: items }
 }
 
-type ScenarioKey = 'chat' | 'cards' | 'i18n' | 'article' | 'stress'
+function buildMorphTree(w: number, fontSize: number): BoxNode {
+  // Dashboard layout: header + stats row + card grid + activity feed
+  // Designed to reflow dramatically across widths
+  const statsItems = [
+    { value: '7,680', label: 'Accuracy tests passed' },
+    { value: '0.09ms', label: 'Resize hot path' },
+    { value: '0 DOM', label: 'Nodes touched' },
+    { value: '60fps', label: 'Animation target' },
+  ]
+
+  const dashCards = [
+    { title: 'Virtualized List', body: 'Pre-compute exact heights for 100k rows. No render-then-measure. No scroll jumps. The scrollbar thumb is perfectly sized from the first frame.' },
+    { title: 'Worker Thread', body: 'The entire layout computation runs off the main thread. Only pixel coordinates cross the boundary. Zero main-thread blocking.' },
+    { title: 'Canvas Renderer', body: 'Full flexbox layout for non-DOM surfaces. Game HUDs, data visualizations, PDF generators — anywhere you paint pixels without browser layout.' },
+    { title: 'Live Resize', body: 'After one-time text preparation, every width change is pure cached arithmetic. Drag a splitter, rotate a device, animate a panel — all under 0.1ms.' },
+    { title: 'i18n Ready', body: 'CJK character breaking, Arabic RTL, Thai word boundaries, emoji ZWJ sequences. Every writing system measured via Intl.Segmenter + canvas.' },
+    { title: 'SSR Layout', body: 'Pre-compute positions on the server. Send exact coordinates with the first HTML payload. Zero layout shift, zero CLS, perfect LCP.' },
+  ]
+
+  const feedMessages = [
+    { name: 'Layout Engine', text: 'Computed 847 text nodes across 12 containers in 0.34ms. All heights pixel-accurate.' },
+    { name: 'Resize Observer', text: 'Container width changed from 1200px to 320px. Re-layout completed in 0.07ms using cached segments.' },
+    { name: 'Virtual Scroller', text: 'Scrolled to row 45,000 of 100,000. Pre-computed height lookup: O(1). No DOM measurement needed.' },
+  ]
+
+  // Determine card columns based on width
+  const cardGap = 12
+  const cardPad = 12
+  const innerW = w - cardPad * 2
+  const cols = w >= 700 ? 3 : w >= 420 ? 2 : 1
+  const cardW = (innerW - cardGap * (cols - 1)) / cols
+
+  return {
+    width: w, flexDirection: 'column', padding: 0,
+    children: [
+      // Header
+      {
+        flexDirection: 'column', padding: 16, gap: 4,
+        children: [
+          { text: 'Textura Dashboard', font: `700 ${fontSize + 6}px Inter`, lineHeight: Math.round((fontSize + 6) * 1.3) } satisfies TextNode,
+          { text: 'DOM-free layout engine — every pixel computed without touching the browser layout system', font: `${fontSize}px Inter`, lineHeight: Math.round(fontSize * 1.5) } satisfies TextNode,
+        ],
+      } satisfies BoxNode,
+      // Stats row
+      {
+        flexDirection: 'row', flexWrap: 'wrap', padding: 12, gap: 8,
+        children: statsItems.map((s): BoxNode => ({
+          flexDirection: 'column', padding: 12, gap: 2,
+          width: w >= 500 ? (innerW - 8 * 3) / 4 : (innerW - 8) / 2,
+          children: [
+            { text: s.value, font: `700 ${fontSize + 2}px Inter`, lineHeight: Math.round((fontSize + 2) * 1.3) } satisfies TextNode,
+            { text: s.label, font: `${fontSize - 2}px Inter`, lineHeight: Math.round((fontSize - 2) * 1.4) } satisfies TextNode,
+          ],
+        })),
+      } satisfies BoxNode,
+      // Card grid
+      {
+        flexDirection: 'row', flexWrap: 'wrap', padding: cardPad, gap: cardGap,
+        children: dashCards.map((c): BoxNode => ({
+          flexDirection: 'column', width: cardW, padding: 14, gap: 6,
+          children: [
+            { text: c.title, font: `600 ${fontSize}px Inter`, lineHeight: Math.round(fontSize * 1.4) } satisfies TextNode,
+            { text: c.body, font: `${fontSize - 1}px Inter`, lineHeight: Math.round((fontSize - 1) * 1.55) } satisfies TextNode,
+          ],
+        })),
+      } satisfies BoxNode,
+      // Activity feed
+      {
+        flexDirection: 'column', padding: 12, gap: 6,
+        children: [
+          { text: 'Activity Log', font: `600 ${fontSize}px Inter`, lineHeight: Math.round(fontSize * 1.4) } satisfies TextNode,
+          ...feedMessages.map((m): BoxNode => ({
+            flexDirection: 'row', gap: 10, padding: 10,
+            children: [
+              { width: 28, height: 28 },
+              {
+                flexDirection: 'column', flexGrow: 1, flexShrink: 1, gap: 2,
+                children: [
+                  { text: m.name, font: `600 ${fontSize - 1}px Inter`, lineHeight: Math.round((fontSize - 1) * 1.3) } satisfies TextNode,
+                  { text: m.text, font: `${fontSize - 1}px Inter`, lineHeight: Math.round((fontSize - 1) * 1.5) } satisfies TextNode,
+                ],
+              } satisfies BoxNode,
+            ],
+          })),
+        ],
+      } satisfies BoxNode,
+    ],
+  }
+}
+
+type ScenarioKey = 'chat' | 'cards' | 'i18n' | 'article' | 'stress' | 'morph'
 const builders: Record<ScenarioKey, (w: number, fs: number) => BoxNode> = {
   chat: buildChatTree, cards: buildCardsTree, i18n: buildI18nTree,
-  article: buildArticleTree, stress: buildStressTree,
+  article: buildArticleTree, stress: buildStressTree, morph: buildMorphTree,
 }
 
 // ── Yoga-only layout (no text measurement) ─────────────────────
@@ -298,7 +385,7 @@ function renderLayout(
   const isAvatar = !isText && layout.children.length === 0 && w >= 20 && w <= 36 && h >= 20 && h <= 36
 
   // Card background
-  if (hasCardStyle && (scenario === 'chat' || scenario === 'i18n' || scenario === 'stress')) {
+  if (hasCardStyle && (scenario === 'chat' || scenario === 'i18n' || scenario === 'stress' || scenario === 'morph')) {
     ctx.fillStyle = palette.card
     roundRect(ctx, x, y, w, h, 6)
     ctx.fill()
@@ -308,8 +395,9 @@ function renderLayout(
     ctx.stroke()
   }
 
-  // Card bg for "cards" scenario
-  if (scenario === 'cards' && 'padding' in tree && tree.padding === 16 && !isText) {
+  // Card bg for "cards" / "morph" scenario
+  if ((scenario === 'cards' && 'padding' in tree && tree.padding === 16 && !isText) ||
+      (scenario === 'morph' && 'padding' in tree && (tree.padding === 14 || tree.padding === 12) && !isText && layout.children.length > 0 && layout.children.length <= 3)) {
     ctx.fillStyle = palette.card
     roundRect(ctx, x, y, w, h, 8)
     ctx.fill()
@@ -464,6 +552,9 @@ const insights: Record<ScenarioKey, string> = {
 
   stress: `<p><strong>200 variable-length items</strong> — the virtualization use case. Every real virtualized list needs to know row heights before rendering. Yoga alone forces you to either use fixed heights (ugly), render-then-measure (slow, causes layout shift), or estimate (inaccurate scroll positions, jumpy scrollbar).</p>
 <p>Textura's first call includes the one-time <code>prepare()</code> cost (canvas text measurement + segmentation). But on every subsequent resize, the cached hot path runs in <strong>under 1ms for all 200 items</strong>. Compare the "Textura resize" stat to "DOM measurement" — that's the real comparison. DOM measures every element with getBoundingClientRect, triggering layout reflow each time.</p>`,
+
+  morph: `<p><strong>This is the demo neither Yoga nor Pretext can do alone.</strong> A complete dashboard UI is being continuously re-laid-out at 60fps as the width sweeps from 320px to 900px and back. Every single frame: Yoga computes the flex layout, Pretext measures all text at the new available widths, boxes resize, cards reflow from 1 to 2 to 3 columns — all in under 1ms.</p>
+<p><strong>Yoga alone</strong> (left) can compute the flex layout but has to guess text heights. Watch the red overflow zones — text spills out of its boxes at every width, and the errors compound as cards reflow. <strong>Pretext alone</strong> can measure text but has no layout engine — it can't compute where boxes go. <strong>The DOM</strong> can't do this at 60fps — continuous relayout triggers synchronous reflow on every frame, dropping to 15–20fps on complex layouts. Only Textura combines both engines to make this possible.</p>`,
 }
 
 // ── DOM measurement for comparison ─────────────────────────────
@@ -581,7 +672,163 @@ function render() {
   document.getElementById('insight-text')!.innerHTML = insights[scenario]
 }
 
+// ── Morph animation ───────────────────────────────────────────
+
+let morphRafId: number | null = null
+const morphFrameTimes: number[] = []
+const MORPH_MIN_W = 320
+const MORPH_MAX_W = 900
+const MORPH_CYCLE_MS = 6000 // full cycle duration
+
+function startMorph() {
+  const morphBar = document.getElementById('morph-bar')!
+  morphBar.classList.add('active')
+  const fpsEl = document.getElementById('morph-fps')!
+  const widthLabelEl = document.getElementById('morph-width-label')!
+  const widthFillEl = document.getElementById('morph-width-fill')!
+  const frameGraphEl = document.getElementById('morph-frame-graph')!
+
+  let lastTime = performance.now()
+  let fpsAccum = 0
+  let fpsFrames = 0
+  let displayFps = 60
+
+  // Prime the text cache with a single call at mid-width
+  const fontSize = parseInt(fontSlider.value)
+  const primeTree = buildMorphTree(600, fontSize)
+  computeLayout(primeTree, { width: 600 })
+
+  function morphFrame(now: number) {
+    const dt = now - lastTime
+    lastTime = now
+
+    // FPS calculation
+    fpsAccum += dt
+    fpsFrames++
+    if (fpsAccum >= 500) {
+      displayFps = Math.round(fpsFrames / (fpsAccum / 1000))
+      fpsAccum = 0
+      fpsFrames = 0
+    }
+
+    // Animated width (sine wave)
+    const t = (now % MORPH_CYCLE_MS) / MORPH_CYCLE_MS
+    const sine = (Math.sin(t * Math.PI * 2 - Math.PI / 2) + 1) / 2
+    const morphWidth = Math.round(MORPH_MIN_W + sine * (MORPH_MAX_W - MORPH_MIN_W))
+
+    const fs = parseInt(fontSlider.value)
+    const tree = buildMorphTree(morphWidth, fs)
+
+    // Textura layout (cached hot path)
+    const t0 = performance.now()
+    const texturaLayout = computeLayout(tree, { width: morphWidth })
+    const texturaTime = performance.now() - t0
+
+    // Yoga layout (estimated)
+    const { layout: yogaLayout, time: yogaTime } = yogaLayoutTree(tree, morphWidth, fs)
+
+    // Track frame times
+    morphFrameTimes.push(texturaTime)
+    if (morphFrameTimes.length > 60) morphFrameTimes.shift()
+
+    // Render canvases
+    const maxHeight = Math.max(texturaLayout.height, yogaLayout.height, 200)
+    const canvasH = Math.min(maxHeight + 20, 800)
+
+    const ctxYR = setupCanvas(canvasYoga, canvasH)
+    const ctxTR = setupCanvas(canvasTextura, canvasH)
+
+    const panelW = canvasYoga.clientWidth
+    const offsetX = Math.max(0, (panelW - morphWidth) / 2)
+
+    ctxYR.fillStyle = palette.bg
+    ctxYR.fillRect(0, 0, panelW, canvasH)
+    ctxTR.fillStyle = palette.bg
+    ctxTR.fillRect(0, 0, panelW, canvasH)
+
+    renderLayout(ctxYR, yogaLayout, tree, offsetX, 10, 'morph', true)
+    renderLayout(ctxTR, texturaLayout, tree, offsetX, 10, 'morph', false)
+
+    // Draw FPS overlay on canvases
+    drawFpsOverlay(ctxYR, panelW, yogaTime, 'Yoga')
+    drawFpsOverlay(ctxTR, panelW, texturaTime, 'Textura')
+
+    // Update stats
+    const overlaps = countOverlaps(yogaLayout, tree, ctxYR)
+    const heightDiff = Math.abs(texturaLayout.height - yogaLayout.height)
+
+    document.getElementById('yoga-time')!.textContent = `Layout: ${yogaTime.toFixed(2)}ms (wrong)`
+    document.getElementById('yoga-nodes')!.textContent = `Height: ${Math.round(yogaLayout.height)}px`
+    document.getElementById('textura-time')!.textContent = `Layout: ${texturaTime.toFixed(2)}ms (accurate)`
+    document.getElementById('textura-nodes')!.textContent = `Height: ${Math.round(texturaLayout.height)}px`
+
+    document.getElementById('stat-overlap')!.textContent = `${overlaps}`
+    document.getElementById('stat-height-diff')!.textContent = `${Math.round(heightDiff)}px`
+    document.getElementById('stat-resize-time')!.textContent = `${texturaTime.toFixed(2)}ms`
+    document.getElementById('stat-dom-time')!.textContent = `—`
+
+    // Update morph bar
+    fpsEl.textContent = `${displayFps}`
+    fpsEl.className = `morph-fps ${displayFps >= 55 ? 'good' : displayFps >= 30 ? 'ok' : 'bad'}`
+    widthLabelEl.textContent = `${morphWidth}px`
+    const pct = ((morphWidth - MORPH_MIN_W) / (MORPH_MAX_W - MORPH_MIN_W)) * 100
+    widthFillEl.style.width = `${pct}%`
+
+    // Frame time graph
+    frameGraphEl.innerHTML = morphFrameTimes.map(ft => {
+      const h = Math.min(40, Math.max(2, ft * 20))
+      const cls = ft > 16 ? 'jank' : ft > 4 ? 'slow' : ''
+      return `<div class="bar ${cls}" style="height:${h}px"></div>`
+    }).join('')
+
+    document.getElementById('insight-text')!.innerHTML = insights['morph']
+
+    morphRafId = requestAnimationFrame(morphFrame)
+  }
+
+  morphRafId = requestAnimationFrame(morphFrame)
+}
+
+function stopMorph() {
+  if (morphRafId !== null) {
+    cancelAnimationFrame(morphRafId)
+    morphRafId = null
+  }
+  document.getElementById('morph-bar')!.classList.remove('active')
+  morphFrameTimes.length = 0
+}
+
+function drawFpsOverlay(ctx: CanvasRenderingContext2D, panelW: number, frameTime: number, label: string) {
+  const text = `${label}: ${frameTime.toFixed(2)}ms`
+  ctx.save()
+  ctx.font = '600 11px Inter'
+  const tw = ctx.measureText(text).width
+  const px = panelW - tw - 16
+  const py = 8
+  ctx.fillStyle = 'rgba(0,0,0,0.7)'
+  roundRect(ctx, px - 6, py - 2, tw + 12, 18, 4)
+  ctx.fill()
+  ctx.fillStyle = frameTime < 2 ? '#4ade80' : frameTime < 8 ? '#fb923c' : '#ef4444'
+  ctx.fillText(text, px, py + 12)
+  ctx.restore()
+}
+
 // ── Events ─────────────────────────────────────────────────────
+
+function onScenarioChange() {
+  const scenario = scenarioSelect.value as ScenarioKey
+  stopMorph()
+
+  if (scenario === 'morph') {
+    widthSlider.disabled = true
+    widthSlider.style.opacity = '0.3'
+    startMorph()
+  } else {
+    widthSlider.disabled = false
+    widthSlider.style.opacity = '1'
+    render()
+  }
+}
 
 render()
 
@@ -592,9 +839,12 @@ widthSlider.addEventListener('input', () => {
 
 fontSlider.addEventListener('input', () => {
   fontLabel.textContent = `${fontSlider.value}px`
+  if (scenarioSelect.value === 'morph') return // font change picked up next frame
   render()
 })
 
-scenarioSelect.addEventListener('change', render)
+scenarioSelect.addEventListener('change', onScenarioChange)
 
-window.addEventListener('resize', render)
+window.addEventListener('resize', () => {
+  if (scenarioSelect.value !== 'morph') render()
+})
