@@ -173,23 +173,28 @@ function applyFlexProps(node: Node, props: FlexProps): void {
     node.setDisplay(props.display === 'none' ? Display.None : Display.Flex)
 }
 
-// --- Tree building ---
+// --- Parallel metadata tree ---
+// Yoga's getChild() returns new JS wrappers, so WeakMap keyed by Node
+// won't match across insertChild/getChild. We keep a parallel tree instead.
 
-interface TextMeta {
-  text: string
-  font: string
-  lineHeight: number
-  lastLineCount: number
+interface MetaNode {
+  text?: string
+  lineCount?: number
+  children: MetaNode[]
 }
 
-/** Metadata attached to Yoga nodes so we can extract text info during readback. */
-const nodeMeta = new WeakMap<Node, TextMeta>()
+interface BuildResult {
+  yogaNode: Node
+  meta: MetaNode
+}
 
-function buildNode(desc: LayoutNode): Node {
+function buildNode(desc: LayoutNode): BuildResult {
   if (yoga === null) throw new Error('textura: call init() first')
 
   const node = yoga.Node.create(getConfig())
   applyFlexProps(node, desc)
+
+  const meta: MetaNode = { children: [] }
 
   if (isTextNode(desc)) {
     const whiteSpace = desc.whiteSpace
@@ -197,8 +202,9 @@ function buildNode(desc: LayoutNode): Node {
     const text = desc.text
     const lineHeight = desc.lineHeight
 
-    const meta: TextMeta = { text, font, lineHeight, lastLineCount: 0 }
-    nodeMeta.set(node, meta)
+    meta.text = text
+    // lineCount will be filled after measure
+    let lastLineCount = 0
 
     node.setMeasureFunc(
       (
@@ -209,23 +215,17 @@ function buildNode(desc: LayoutNode): Node {
       ) => {
         const prepared = prepare(text, font, whiteSpace ? { whiteSpace } : undefined)
 
-        // Determine max width for line breaking
         let maxWidth: number
-        if (widthMode === MeasureMode.Exactly) {
-          maxWidth = width
-        } else if (widthMode === MeasureMode.AtMost) {
+        if (widthMode === MeasureMode.Exactly || widthMode === MeasureMode.AtMost) {
           maxWidth = width
         } else {
-          // Undefined — no constraint. Use a very large width (single line).
           maxWidth = 1e7
         }
 
         const result = layout(prepared, maxWidth, lineHeight)
-        meta.lastLineCount = result.lineCount
+        lastLineCount = result.lineCount
+        meta.lineCount = lastLineCount
 
-        // For AtMost/Undefined, the intrinsic width could be narrower.
-        // We report the constrained width for Exactly/AtMost, and the
-        // full container for Undefined (Yoga handles shrinking).
         const reportedWidth =
           widthMode === MeasureMode.Undefined ? maxWidth : width
 
@@ -236,17 +236,19 @@ function buildNode(desc: LayoutNode): Node {
     const children = desc.children
     if (children) {
       for (let i = 0; i < children.length; i++) {
-        node.insertChild(buildNode(children[i]!), i)
+        const child = buildNode(children[i]!)
+        node.insertChild(child.yogaNode, i)
+        meta.children.push(child.meta)
       }
     }
   }
 
-  return node
+  return { yogaNode: node, meta }
 }
 
 // --- Layout readback ---
 
-function readLayout(node: Node): ComputedLayout {
+function readLayout(node: Node, meta: MetaNode): ComputedLayout {
   const computed: ComputedLayout = {
     x: node.getComputedLeft(),
     y: node.getComputedTop(),
@@ -255,15 +257,14 @@ function readLayout(node: Node): ComputedLayout {
     children: [],
   }
 
-  const meta = nodeMeta.get(node)
-  if (meta) {
+  if (meta.text !== undefined) {
     computed.text = meta.text
-    computed.lineCount = meta.lastLineCount
+    computed.lineCount = meta.lineCount ?? 0
   }
 
   const childCount = node.getChildCount()
   for (let i = 0; i < childCount; i++) {
-    computed.children.push(readLayout(node.getChild(i)))
+    computed.children.push(readLayout(node.getChild(i), meta.children[i]!))
   }
 
   return computed
@@ -292,7 +293,7 @@ export function computeLayout(
 ): ComputedLayout {
   if (yoga === null) throw new Error('textura: call init() first')
 
-  const root = buildNode(tree)
+  const { yogaNode: root, meta } = buildNode(tree)
 
   const w = options?.width
   const h = options?.height
@@ -300,7 +301,7 @@ export function computeLayout(
     options?.direction === 'rtl' ? Direction.RTL : Direction.LTR
 
   root.calculateLayout(w, h, dir)
-  const result = readLayout(root)
+  const result = readLayout(root, meta)
   root.freeRecursive()
 
   return result
