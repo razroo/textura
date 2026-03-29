@@ -1,0 +1,33 @@
+{
+  "name": "textura",
+  "version": "0.1.0",
+  "description": "DOM-free layout engine combining Yoga flexbox with Pretext text measurement",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "check": "tsc",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@chenglou/pretext": "^0.0.3",
+    "yoga-layout": "^3.2.1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "6.0.2"
+  }
+}
