@@ -17,6 +17,18 @@ const scenarioSelect = document.getElementById('scenario') as HTMLSelectElement
 
 const dpr = window.devicePixelRatio || 1
 
+function clampWidthSlider() {
+  const panelW = canvasYoga.parentElement!.clientWidth - 2
+  if (panelW > 0) {
+    const max = Math.min(660, panelW)
+    widthSlider.max = String(max)
+    if (parseInt(widthSlider.value) > max) {
+      widthSlider.value = String(max)
+      widthLabel.textContent = `${max}px`
+    }
+  }
+}
+
 // ── Scenario data ──────────────────────────────────────────────
 
 interface Message { author: string; text: string; time: string }
@@ -3281,6 +3293,9 @@ function onScenarioChange() {
   activateScenario(scenario)
 }
 
+// Clamp width slider to panel on load
+clampWidthSlider()
+
 // Apply initial scenario from hash or default
 const initialScenario = getScenarioFromHash()
 if (initialScenario) {
@@ -3349,6 +3364,7 @@ fontSlider.addEventListener('input', () => {
 scenarioSelect.addEventListener('change', onScenarioChange)
 
 window.addEventListener('resize', () => {
+  clampWidthSlider()
   if (scenarioSelect.value === 'morph') return
   if (scenarioSelect.value === 'vscroll') { renderVScroll(); return }
   if (scenarioSelect.value === 'editor') { renderEditor(); return }
