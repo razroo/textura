@@ -18,6 +18,18 @@ DOM-free layout engine combining Yoga (flexbox) with Pretext (text measurement).
 - `tsconfig.build.json` — publish-time emit config for `dist/`
 - `.github/workflows/release.yml` — GitHub Actions workflow: publishes to npm on GitHub Release
 
+### Releasing to npm
+
+A GitHub Actions workflow handles npm publishing for both packages. To release:
+
+1. Create a GitHub release with a `v`-prefixed tag (e.g. `gh release create v0.2.0 --title "v0.2.0" --notes "..."`)
+2. The workflow automatically:
+   - Builds and publishes `textura` to npm
+   - Then builds and publishes `@razroo/textura-mcp` to npm (with matching version and dependency)
+3. Requires `NPM_TOKEN` secret configured in the repo
+
+Do **not** publish manually via `npm publish` — use the release workflow.
+
 ### Implementation notes
 
 - `init()` loads Yoga WASM via `yoga-layout/load` (async). Must be called before `computeLayout`.
