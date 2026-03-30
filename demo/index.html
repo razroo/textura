@@ -696,10 +696,10 @@
 
   <div class="worldmodel-bar" id="worldmodel-bar">
     <div class="synth-inner">
-      <button class="aistream-btn" id="wm-btn">Run Agent</button>
+      <button class="aistream-btn" id="wm-btn">Generate Rooms</button>
       <div class="vscroll-stat">
-        <div class="vscroll-stat-value warn" id="wm-drift">0px</div>
-        <div class="vscroll-stat-label">Agent drift (Yoga vs Textura)</div>
+        <div class="vscroll-stat-value good" id="wm-generated">0</div>
+        <div class="vscroll-stat-label">Rooms generated</div>
       </div>
       <div class="vscroll-stat">
         <div class="vscroll-stat-value good" id="wm-layout-time">—</div>
@@ -707,13 +707,14 @@
       </div>
       <div class="vscroll-stat">
         <div class="vscroll-stat-value warn" id="wm-bbox-errors">0</div>
-        <div class="vscroll-stat-label">Wrong bounding boxes</div>
+        <div class="vscroll-stat-label">Wrong heights (Yoga)</div>
       </div>
       <div class="vscroll-stat">
-        <div class="vscroll-stat-value good" id="wm-waypoint">1/8</div>
-        <div class="vscroll-stat-label">Waypoint</div>
+        <div class="vscroll-stat-value warn" id="wm-total-drift">0px</div>
+        <div class="vscroll-stat-label">Total height drift</div>
       </div>
     </div>
+    <div id="wm-token-output" style="max-width:1400px;margin:12px auto 0;padding:14px;background:#111114;border:1px solid #2a2a35;border-radius:8px;overflow-x:auto"></div>
   </div>
 
   <div class="synth-bar" id="synth-bar">

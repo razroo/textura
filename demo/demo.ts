@@ -617,8 +617,8 @@ const insights: Record<ScenarioKey, string> = {
   morph: `<p><strong>This is the demo neither ${yogaLink} nor ${pretextLink} can do alone.</strong> A complete dashboard UI is being continuously re-laid-out at 60fps as the width sweeps from 320px to 900px and back. Every single frame: ${yogaLink} computes the flex layout, ${pretextLink} measures all text at the new available widths, boxes resize, cards reflow from 1 to 2 to 3 columns — all in under 1ms.</p>
 <p><strong>${yogaLink} alone</strong> (left) can compute the flex layout but has to guess text heights. Watch the red overflow zones — text spills out of its boxes at every width, and the errors compound as cards reflow. <strong>${pretextLink} alone</strong> can measure text but has no layout engine — it can't compute where boxes go. <strong>The DOM</strong> can't do this at 60fps — continuous relayout triggers synchronous reflow on every frame, dropping to 15–20fps on complex layouts. Only Textura combines both engines to make this possible.</p>`,
 
-  worldmodel: `<p><strong>Text-based world models need accurate spatial geometry.</strong> A "world model" built from text — where walls, signs, and obstacles are text strings with physical dimensions — requires precise bounding boxes for collision physics. The agent (green circle) navigates a room of text obstacles. Watch both canvases: the agent follows the <em>same velocity</em> but collides against <em>different bounding boxes</em>.</p>
-<p>On the left, ${yogaLink} estimates text heights with a characters-per-line heuristic. Multi-line signs and labels get wrong heights — gaps that should be passable become blocked, walls that should be solid get clipped through. On the right, Textura measures every text node accurately, so collision boundaries match the actual text. <strong>Accurate text measurement = accurate physics = a correct world model.</strong> This matters for training spatial AI agents on text-defined environments without a browser.</p>`,
+  worldmodel: `<p><strong>Small text-only models need accurate spatial data to learn world models.</strong> An LLM generates a room description ("a bookshelf with ancient texts, a warning sign"). Textura lays it out and serializes the geometry as text tokens — the training data a small model receives. Each object gets precise coordinates: <code>BOOKSHELF x=14 y=46 w=185 h=74</code>.</p>
+<p>Look at the token output below the canvases. ${yogaLink}'s estimated heights (left, <span style="color:#ef4444">red = wrong</span>) corrupt the training data — the model learns incorrect spatial relationships. Gaps between objects are reported as wider or narrower than they actually are. Textura's accurate heights (right) give ground-truth geometry. <strong>At scale, this is millions of rooms with pixel-perfect coordinates, generated on a single thread, no browser needed.</strong> Click "Generate Rooms" to watch the pipeline produce varied environments.</p>`,
 }
 
 // ── DOM measurement for comparison ─────────────────────────────
@@ -2844,227 +2844,144 @@ function drawFpsOverlay(ctx: CanvasRenderingContext2D, panelW: number, frameTime
 
 // ── Text World Model ─────────────────────────────────────────
 
-let wmAnimId: number | null = null
 let wmContainerWidth = 440
 let wmLastLayoutTime = 0
+let wmGenerateInterval: ReturnType<typeof setInterval> | null = null
+let wmSeed = 1
+let wmGenCount = 0
 
-// Agent state — one per canvas, driven by same input but different collision
-interface WmAgent {
-  x: number
-  y: number
-  vx: number
-  vy: number
-}
-let wmAgentYoga: WmAgent = { x: 60, y: 60, vx: 0, vy: 0 }
-let wmAgentTextura: WmAgent = { x: 60, y: 60, vx: 0, vy: 0 }
-
-// Waypoints the agent follows
-const wmWaypoints = [
-  { x: 60, y: 60 },
-  { x: 340, y: 60 },
-  { x: 340, y: 200 },
-  { x: 120, y: 280 },
-  { x: 60, y: 400 },
-  { x: 300, y: 400 },
-  { x: 300, y: 140 },
-  { x: 60, y: 200 },
+// Room descriptions an LLM might generate
+const wmRoomNames = [
+  'The Library', 'Guard Tower', 'Merchant Quarter', 'Dungeon Cell',
+  'Royal Chamber', 'Alchemy Lab', 'Training Grounds', 'Tavern Hall',
+  'Observatory', 'Crypt Entrance', 'Forge Room', 'Harbor Office',
 ]
-let wmWaypointIdx = 0
-const WM_AGENT_RADIUS = 8
-const WM_AGENT_SPEED = 1.5
 
-function buildWorldModelTree(w: number, fontSize: number): BoxNode {
-  const f = (bold = false) => `${bold ? '700 ' : ''}${fontSize}px Inter`
-  const lh = Math.round(fontSize * 1.5)
-  const smLh = Math.round((fontSize - 2) * 1.5)
+const wmObjectNames = [
+  'BOOKSHELF', 'WARNING SIGN', 'TREASURE CHEST', 'STONE PILLAR',
+  'WEAPON RACK', 'WOODEN TABLE', 'IRON GATE', 'ALTAR',
+  'SUPPLY CRATE', 'BANNER', 'TORCH SCONCE', 'STATUE',
+]
 
-  return {
-    width: w, flexDirection: 'column', padding: 12, gap: 0,
-    children: [
-      // Top wall
-      { text: '████████████████████████████████████████████████████', font: f(true), lineHeight: lh } satisfies TextNode,
-      // Room content
-      {
-        flexDirection: 'row', gap: 0,
-        children: [
-          // Left wall
-          { text: '██\n██\n██\n██\n██\n██\n██\n██\n██\n██\n██\n██\n██\n██', font: f(true), lineHeight: lh, whiteSpace: 'pre-wrap' as const } satisfies TextNode,
-          // Room interior
-          {
-            flexDirection: 'column', flexGrow: 1, flexShrink: 1, padding: 10, gap: 14,
-            children: [
-              // Row 1: Bookshelf and sign
-              {
-                flexDirection: 'row', gap: 20,
-                children: [
-                  {
-                    flexDirection: 'column', padding: 8, gap: 4,
-                    children: [
-                      { text: 'BOOKSHELF', font: f(true), lineHeight: lh } satisfies TextNode,
-                      { text: 'Ancient texts, rare manuscripts, and forbidden knowledge line these dusty shelves', font: `${fontSize - 2}px Inter`, lineHeight: smLh } satisfies TextNode,
-                    ],
-                  } satisfies BoxNode,
-                  {
-                    flexDirection: 'column', padding: 8, gap: 4,
-                    children: [
-                      { text: 'WELCOME SIGN', font: f(true), lineHeight: lh } satisfies TextNode,
-                      { text: 'Please browse quietly. Return all items to their designated locations before leaving.', font: `${fontSize - 2}px Inter`, lineHeight: smLh } satisfies TextNode,
-                    ],
-                  } satisfies BoxNode,
-                ],
-              } satisfies BoxNode,
-              // Row 2: Narrow corridor with gap
-              {
-                flexDirection: 'row', gap: 8,
-                children: [
-                  { text: '████████████', font: f(true), lineHeight: lh } satisfies TextNode,
-                  // Gap — agent must fit through here
-                  { width: 40 } satisfies BoxNode,
-                  { text: '████████████', font: f(true), lineHeight: lh } satisfies TextNode,
-                ],
-              } satisfies BoxNode,
-              // Row 3: Table and reading nook
-              {
-                flexDirection: 'row', gap: 20,
-                children: [
-                  {
-                    flexDirection: 'column', padding: 8, gap: 4,
-                    children: [
-                      { text: 'STUDY TABLE', font: f(true), lineHeight: lh } satisfies TextNode,
-                      { text: 'A heavy oak table covered in maps, scrolls, and half-finished equations', font: `${fontSize - 2}px Inter`, lineHeight: smLh } satisfies TextNode,
-                    ],
-                  } satisfies BoxNode,
-                  {
-                    flexDirection: 'column', padding: 8, gap: 4,
-                    children: [
-                      { text: 'READING NOOK', font: f(true), lineHeight: lh } satisfies TextNode,
-                      { text: 'A cozy alcove with cushions. The lamp flickers as wind whistles through cracks in the stone.', font: `${fontSize - 2}px Inter`, lineHeight: smLh } satisfies TextNode,
-                    ],
-                  } satisfies BoxNode,
-                ],
-              } satisfies BoxNode,
-              // Row 4: Another corridor
-              {
-                flexDirection: 'row', gap: 8,
-                children: [
-                  { text: '██████', font: f(true), lineHeight: lh } satisfies TextNode,
-                  { width: 50 } satisfies BoxNode,
-                  { text: '██████████████', font: f(true), lineHeight: lh } satisfies TextNode,
-                ],
-              } satisfies BoxNode,
-              // Row 5: Exit area
-              {
-                flexDirection: 'row', gap: 16,
-                children: [
-                  {
-                    flexDirection: 'column', padding: 8, gap: 4,
-                    children: [
-                      { text: 'EXIT', font: f(true), lineHeight: lh } satisfies TextNode,
-                      { text: 'Through the archway, torchlight reveals a descending spiral staircase', font: `${fontSize - 2}px Inter`, lineHeight: smLh } satisfies TextNode,
-                    ],
-                  } satisfies BoxNode,
-                  {
-                    flexDirection: 'column', padding: 8, gap: 4,
-                    children: [
-                      { text: 'TREASURY', font: f(true), lineHeight: lh } satisfies TextNode,
-                      { text: 'DO NOT ENTER — restricted area. Authorized personnel only beyond this point.', font: `${fontSize - 2}px Inter`, lineHeight: smLh } satisfies TextNode,
-                    ],
-                  } satisfies BoxNode,
-                ],
-              } satisfies BoxNode,
-            ],
-          } satisfies BoxNode,
-          // Right wall
-          { text: '██\n██\n██\n██\n██\n██\n██\n██\n██\n██\n██\n██\n██\n██', font: f(true), lineHeight: lh, whiteSpace: 'pre-wrap' as const } satisfies TextNode,
-        ],
-      } satisfies BoxNode,
-      // Bottom wall
-      { text: '████████████████████████████████████████████████████', font: f(true), lineHeight: lh } satisfies TextNode,
-    ],
+const wmDescriptions = [
+  'Ancient texts and rare manuscripts line these dusty shelves from floor to ceiling.',
+  'DANGER — Do not proceed. Structural integrity compromised beyond this point.',
+  'A heavy iron-bound chest. The lock mechanism appears to require a specific combination.',
+  'Carved from a single block of granite, this pillar supports the vaulted ceiling above.',
+  'Swords, axes, and polearms arranged in meticulous order. Recently polished.',
+  'A heavy oak table covered in maps, scrolls, and half-finished equations.',
+  'The iron bars are cold to the touch. Strange symbols are etched into the frame.',
+  'Candles flicker around a raised stone platform. The air smells of incense.',
+  'Wooden crates stamped with merchant guild seals. Contents: provisions and tools.',
+  'A faded tapestry depicting the founding of the kingdom. The colors are still vivid.',
+  'The bracket is empty — someone has already taken the torch from this mount.',
+  'A marble figure with outstretched arms. The eyes seem to follow your movement.',
+  'Please browse quietly. Return all items to their designated locations.',
+  'Through the archway, torchlight reveals a descending spiral staircase.',
+  'DO NOT ENTER — restricted area. Authorized personnel only beyond this point.',
+  'A cozy alcove with cushions. Wind whistles through cracks in the stone walls.',
+]
+
+function wmRand(seed: number): () => number {
+  let s = seed | 0
+  return () => {
+    s = (s + 0x6D2B79F5) | 0
+    let t = Math.imul(s ^ (s >>> 15), 1 | s)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
 }
 
-// Extract all solid bounding boxes from a computed layout (text nodes + padded containers)
-function extractCollisionBoxes(layout: ComputedLayout, tree: BoxNode | TextNode, px: number, py: number): { x: number; y: number; w: number; h: number }[] {
-  const boxes: { x: number; y: number; w: number; h: number }[] = []
+function buildWorldModelTree(w: number, fontSize: number, seed: number): { tree: BoxNode; objects: { name: string; desc: string }[] } {
+  const rand = wmRand(seed)
+  const lh = Math.round(fontSize * 1.5)
+  const smLh = Math.round((fontSize - 2) * 1.5)
+
+  const objectCount = 3 + Math.floor(rand() * 3) // 3-5 objects
+  const objects: { name: string; desc: string }[] = []
+  const rows: BoxNode[] = []
+
+  // Generate pairs of objects per row
+  for (let i = 0; i < objectCount; i += 2) {
+    const rowChildren: (BoxNode | TextNode)[] = []
+
+    for (let j = 0; j < 2 && i + j < objectCount; j++) {
+      const nameIdx = Math.floor(rand() * wmObjectNames.length)
+      const descIdx = Math.floor(rand() * wmDescriptions.length)
+      const name = wmObjectNames[nameIdx]!
+      const desc = wmDescriptions[descIdx]!
+      objects.push({ name, desc })
+
+      rowChildren.push({
+        flexDirection: 'column', padding: 8, gap: 4, flexGrow: 1, flexShrink: 1,
+        children: [
+          { text: name, font: `700 ${fontSize}px Inter`, lineHeight: lh } satisfies TextNode,
+          { text: desc, font: `${fontSize - 2}px Inter`, lineHeight: smLh } satisfies TextNode,
+        ],
+      } satisfies BoxNode)
+    }
+
+    rows.push({
+      flexDirection: 'row', gap: 16,
+      children: rowChildren,
+    } satisfies BoxNode)
+  }
+
+  const roomName = wmRoomNames[Math.floor(rand() * wmRoomNames.length)]!
+
+  const tree: BoxNode = {
+    width: w, flexDirection: 'column', padding: 14, gap: 10,
+    children: [
+      { text: roomName, font: `700 ${fontSize + 2}px Inter`, lineHeight: Math.round((fontSize + 2) * 1.4) } satisfies TextNode,
+      ...rows,
+    ],
+  }
+
+  return { tree, objects }
+}
+
+// Serialize layout to text tokens — what a small model receives
+interface WmTokenEntry {
+  name: string
+  text: string
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+function serializeLayout(layout: ComputedLayout, tree: BoxNode | TextNode, px: number, py: number): WmTokenEntry[] {
+  const entries: WmTokenEntry[] = []
   const x = px + layout.x
   const y = py + layout.y
 
   if (layout.text !== undefined) {
-    // Text nodes are solid obstacles
-    boxes.push({ x, y, w: layout.width, h: layout.height })
+    // Determine a label: use first word if it's a title (bold), or truncate
+    const text = layout.text
+    const name = text.length <= 20 ? text : text.slice(0, 20) + '...'
+    entries.push({
+      name,
+      text,
+      x: Math.round(x),
+      y: Math.round(y),
+      w: Math.round(layout.width),
+      h: Math.round(layout.height),
+    })
   } else {
-    // Recurse into children
     const children = ('children' in tree) ? (tree as BoxNode).children ?? [] : []
     for (let i = 0; i < layout.children.length; i++) {
       if (children[i]) {
-        boxes.push(...extractCollisionBoxes(layout.children[i]!, children[i]!, x, y))
+        entries.push(...serializeLayout(layout.children[i]!, children[i]!, x, y))
       }
     }
   }
-  return boxes
-}
-
-// Circle-AABB collision resolution
-function resolveCircleAABB(agent: WmAgent, boxes: { x: number; y: number; w: number; h: number }[]): void {
-  for (const box of boxes) {
-    // Find closest point on AABB to circle center
-    const closestX = Math.max(box.x, Math.min(agent.x, box.x + box.w))
-    const closestY = Math.max(box.y, Math.min(agent.y, box.y + box.h))
-    const dx = agent.x - closestX
-    const dy = agent.y - closestY
-    const distSq = dx * dx + dy * dy
-
-    if (distSq < WM_AGENT_RADIUS * WM_AGENT_RADIUS) {
-      const dist = Math.sqrt(distSq)
-      if (dist === 0) {
-        // Agent center is inside the box — push out to nearest edge
-        const toLeft = agent.x - box.x
-        const toRight = (box.x + box.w) - agent.x
-        const toTop = agent.y - box.y
-        const toBottom = (box.y + box.h) - agent.y
-        const minDist = Math.min(toLeft, toRight, toTop, toBottom)
-        if (minDist === toLeft) agent.x = box.x - WM_AGENT_RADIUS
-        else if (minDist === toRight) agent.x = box.x + box.w + WM_AGENT_RADIUS
-        else if (minDist === toTop) agent.y = box.y - WM_AGENT_RADIUS
-        else agent.y = box.y + box.h + WM_AGENT_RADIUS
-      } else {
-        const overlap = WM_AGENT_RADIUS - dist
-        agent.x += (dx / dist) * overlap
-        agent.y += (dy / dist) * overlap
-      }
-    }
-  }
-}
-
-function resetWorldModel() {
-  wmAgentYoga = { x: 60, y: 60, vx: 0, vy: 0 }
-  wmAgentTextura = { x: 60, y: 60, vx: 0, vy: 0 }
-  wmWaypointIdx = 0
-}
-
-function stepWorldModelAgent(agent: WmAgent, boxes: { x: number; y: number; w: number; h: number }[]) {
-  // Move toward current waypoint
-  const target = wmWaypoints[wmWaypointIdx % wmWaypoints.length]!
-  const dx = target.x - agent.x
-  const dy = target.y - agent.y
-  const dist = Math.sqrt(dx * dx + dy * dy)
-
-  if (dist < 5) return // close enough
-
-  agent.vx = (dx / dist) * WM_AGENT_SPEED
-  agent.vy = (dy / dist) * WM_AGENT_SPEED
-  agent.x += agent.vx
-  agent.y += agent.vy
-
-  // Resolve collisions
-  resolveCircleAABB(agent, boxes)
+  return entries
 }
 
 function renderWorldModel() {
   const fontSize = parseInt(fontSlider.value)
   const w = wmContainerWidth
-  const tree = buildWorldModelTree(w, fontSize)
+  const { tree, objects } = buildWorldModelTree(w, fontSize, wmSeed)
 
   const t0 = performance.now()
   const texturaLayout = computeLayout(tree, { width: w })
@@ -3072,8 +2989,8 @@ function renderWorldModel() {
 
   const { layout: yogaLayout } = yogaLayoutTree(tree, w, fontSize)
 
-  const maxHeight = Math.max(texturaLayout.height, yogaLayout.height, 300)
-  const canvasH = Math.min(maxHeight + 40, 800)
+  const maxHeight = Math.max(texturaLayout.height, yogaLayout.height, 200)
+  const canvasH = Math.min(maxHeight + 20, 600)
 
   const ctxY = setupCanvas(canvasYoga, canvasH)
   const ctxT = setupCanvas(canvasTextura, canvasH)
@@ -3081,130 +2998,153 @@ function renderWorldModel() {
   const offsetX = Math.max(0, (panelW - w) / 2)
 
   // Background
-  ctxY.fillStyle = '#0a0a0f'
+  ctxY.fillStyle = palette.bg
   ctxY.fillRect(0, 0, panelW, canvasH)
-  ctxT.fillStyle = '#0a0a0f'
+  ctxT.fillStyle = palette.bg
   ctxT.fillRect(0, 0, panelW, canvasH)
 
-  // Extract collision boxes
-  const yogaBoxes = extractCollisionBoxes(yogaLayout, tree, offsetX, 10)
-  const texturaBoxes = extractCollisionBoxes(texturaLayout, tree, offsetX, 10)
-
-  // Step agents
-  stepWorldModelAgent(wmAgentYoga, yogaBoxes)
-  stepWorldModelAgent(wmAgentTextura, texturaBoxes)
-
-  // Advance waypoint if both agents are close or stuck
-  const target = wmWaypoints[wmWaypointIdx % wmWaypoints.length]!
-  const dT = Math.sqrt((wmAgentTextura.x - target.x) ** 2 + (wmAgentTextura.y - target.y) ** 2)
-  if (dT < 5) {
-    wmWaypointIdx = (wmWaypointIdx + 1) % wmWaypoints.length
-  }
-
-  // Draw collision boxes (obstacles)
-  function drawObstacles(ctx: CanvasRenderingContext2D, boxes: { x: number; y: number; w: number; h: number }[], isYoga: boolean) {
-    for (const box of boxes) {
-      ctx.fillStyle = isYoga ? '#1e293b80' : '#1e293b80'
-      ctx.fillRect(box.x, box.y, box.w, box.h)
-      ctx.strokeStyle = isYoga ? '#fb923c40' : '#4ade8040'
-      ctx.lineWidth = 1
-      ctx.strokeRect(box.x, box.y, box.w, box.h)
-    }
-  }
-
-  drawObstacles(ctxY, yogaBoxes, true)
-  drawObstacles(ctxT, texturaBoxes, false)
-
-  // Render text on top of obstacles
+  // Render layouts
   renderLayout(ctxY, yogaLayout, tree, offsetX, 10, 'worldmodel', true)
   renderLayout(ctxT, texturaLayout, tree, offsetX, 10, 'worldmodel', false)
 
-  // Draw collision box outlines more visibly
-  function drawCollisionOutlines(ctx: CanvasRenderingContext2D, boxes: { x: number; y: number; w: number; h: number }[], isYoga: boolean) {
-    ctx.setLineDash([3, 3])
-    for (const box of boxes) {
+  // Draw bounding box overlays
+  function drawBboxes(ctx: CanvasRenderingContext2D, layout: ComputedLayout, tree: BoxNode | TextNode, px: number, py: number, isYoga: boolean) {
+    const x = px + layout.x
+    const y = py + layout.y
+    if (layout.text !== undefined) {
       ctx.strokeStyle = isYoga ? '#fb923c60' : '#4ade8060'
       ctx.lineWidth = 1
-      ctx.strokeRect(box.x, box.y, box.w, box.h)
+      ctx.setLineDash([3, 3])
+      ctx.strokeRect(x, y, layout.width, layout.height)
+      ctx.setLineDash([])
+      // Show height label
+      ctx.font = '500 9px Inter'
+      ctx.fillStyle = isYoga ? '#fb923c' : '#4ade80'
+      ctx.fillText(`${Math.round(layout.height)}px`, x + layout.width + 3, y + layout.height / 2 + 3)
+    } else {
+      const children = ('children' in tree) ? (tree as BoxNode).children ?? [] : []
+      for (let i = 0; i < layout.children.length; i++) {
+        if (children[i]) drawBboxes(ctx, layout.children[i]!, children[i]!, x, y, isYoga)
+      }
     }
-    ctx.setLineDash([])
   }
 
-  drawCollisionOutlines(ctxY, yogaBoxes, true)
-  drawCollisionOutlines(ctxT, texturaBoxes, false)
+  drawBboxes(ctxY, yogaLayout, tree, offsetX, 10, true)
+  drawBboxes(ctxT, texturaLayout, tree, offsetX, 10, false)
 
-  // Draw agents
-  function drawAgent(ctx: CanvasRenderingContext2D, agent: WmAgent, isYoga: boolean) {
-    // Trail
-    ctx.beginPath()
-    ctx.arc(agent.x, agent.y, WM_AGENT_RADIUS + 3, 0, Math.PI * 2)
-    ctx.fillStyle = isYoga ? '#fb923c15' : '#4ade8015'
-    ctx.fill()
+  // Serialize to tokens
+  const yogaTokens = serializeLayout(yogaLayout, tree, 0, 0)
+  const texturaTokens = serializeLayout(texturaLayout, tree, 0, 0)
 
-    // Agent circle
-    ctx.beginPath()
-    ctx.arc(agent.x, agent.y, WM_AGENT_RADIUS, 0, Math.PI * 2)
-    ctx.fillStyle = isYoga ? '#fb923c' : '#4ade80'
-    ctx.fill()
-    ctx.strokeStyle = isYoga ? '#fff' : '#fff'
-    ctx.lineWidth = 1.5
-    ctx.stroke()
-
-    // Direction indicator
-    ctx.beginPath()
-    ctx.arc(agent.x + agent.vx * 3, agent.y + agent.vy * 3, 2, 0, Math.PI * 2)
-    ctx.fillStyle = '#fff'
-    ctx.fill()
+  // Count height errors
+  let heightErrors = 0
+  let totalHeightDrift = 0
+  for (let i = 0; i < Math.min(yogaTokens.length, texturaTokens.length); i++) {
+    const yT = yogaTokens[i]!
+    const tT = texturaTokens[i]!
+    if (Math.abs(yT.h - tT.h) > 2) {
+      heightErrors++
+      totalHeightDrift += Math.abs(yT.h - tT.h)
+    }
   }
 
-  drawAgent(ctxY, wmAgentYoga, true)
-  drawAgent(ctxT, wmAgentTextura, false)
+  // Render serialized tokens into the output panel
+  const tokenPanel = document.getElementById('wm-token-output')!
+  let html = ''
 
-  // Draw waypoint target
-  const wp = wmWaypoints[wmWaypointIdx % wmWaypoints.length]!
-  for (const ctx of [ctxY, ctxT]) {
-    ctx.beginPath()
-    ctx.arc(wp.x, wp.y, 4, 0, Math.PI * 2)
-    ctx.strokeStyle = '#ffffff40'
-    ctx.lineWidth = 1
-    ctx.setLineDash([2, 2])
-    ctx.stroke()
-    ctx.setLineDash([])
+  // Show tokens side by side
+  html += '<div style="display:flex;gap:16px;font-size:12px;line-height:1.6">'
+
+  // Yoga tokens
+  html += '<div style="flex:1;min-width:0">'
+  html += '<div style="color:#fb923c;font-weight:600;margin-bottom:6px">Yoga (estimated) tokens:</div>'
+  html += '<pre style="margin:0;white-space:pre-wrap;color:#a1a1aa;font-size:11px;font-family:SF Mono,Fira Code,monospace">'
+  for (const t of yogaTokens) {
+    const matchingTextura = texturaTokens.find(tt => tt.name === t.name)
+    const isWrong = matchingTextura && Math.abs(t.h - matchingTextura.h) > 2
+    const hStyle = isWrong ? 'color:#ef4444;font-weight:700' : ''
+    const yStyle = isWrong && matchingTextura && Math.abs(t.y - matchingTextura.y) > 2 ? 'color:#ef4444;font-weight:700' : ''
+    const label = t.name.length > 16 ? t.name.slice(0, 16) + '..' : t.name.padEnd(18)
+    html += `<span style="color:#71717a">${label}</span> `
+    html += `x=<span>${t.x}</span> `
+    html += `y=<span ${yStyle ? `style="${yStyle}"` : ''}>${t.y}</span> `
+    html += `w=<span>${t.w}</span> `
+    html += `h=<span ${hStyle ? `style="${hStyle}"` : ''}>${t.h}</span>\n`
   }
+  html += '</pre></div>'
+
+  // Textura tokens
+  html += '<div style="flex:1;min-width:0">'
+  html += '<div style="color:#4ade80;font-weight:600;margin-bottom:6px">Textura (accurate) tokens:</div>'
+  html += '<pre style="margin:0;white-space:pre-wrap;color:#a1a1aa;font-size:11px;font-family:SF Mono,Fira Code,monospace">'
+  for (const t of texturaTokens) {
+    const label = t.name.length > 16 ? t.name.slice(0, 16) + '..' : t.name.padEnd(18)
+    html += `<span style="color:#71717a">${label}</span> `
+    html += `x=<span>${t.x}</span> `
+    html += `y=<span>${t.y}</span> `
+    html += `w=<span>${t.w}</span> `
+    html += `h=<span>${t.h}</span>\n`
+  }
+  html += '</pre></div>'
+
+  html += '</div>'
+
+  // Query example
+  html += '<div style="margin-top:12px;padding:10px;background:#1a1a22;border-radius:6px;border:1px solid #2a2a35;font-size:11px;font-family:SF Mono,Fira Code,monospace">'
+  if (objects.length >= 2) {
+    const a = texturaTokens.find(t => t.name === objects[0]!.name)
+    const b = texturaTokens.find(t => t.name === objects[1]!.name)
+    const aY = yogaTokens.find(t => t.name === objects[0]!.name)
+    const bY = yogaTokens.find(t => t.name === objects[1]!.name)
+    if (a && b && aY && bY) {
+      const gapTextura = Math.abs((b.y) - (a.y + a.h))
+      const gapYoga = Math.abs((bY.y) - (aY.y + aY.h))
+      html += `<span style="color:#71717a">// Query: gap between "${objects[0]!.name}" and "${objects[1]!.name}"</span>\n`
+      html += `<span style="color:#fb923c">Yoga answer:    ${gapYoga}px</span>  `
+      if (Math.abs(gapYoga - gapTextura) > 2) {
+        html += `<span style="color:#ef4444">← wrong by ${Math.abs(gapYoga - gapTextura)}px</span>\n`
+      } else {
+        html += `\n`
+      }
+      html += `<span style="color:#4ade80">Textura answer: ${gapTextura}px</span>  <span style="color:#4ade80">← ground truth</span>`
+    }
+  }
+  html += '</div>'
+
+  tokenPanel.innerHTML = html
 
   // Stats
   const overlaps = countOverlaps(yogaLayout, tree, ctxY)
   const heightDiff = Math.abs(texturaLayout.height - yogaLayout.height)
-  const yogaAgentDist = Math.sqrt((wmAgentYoga.x - wmAgentTextura.x) ** 2 + (wmAgentYoga.y - wmAgentTextura.y) ** 2)
 
-  document.getElementById('yoga-time')!.textContent = `Height: ${Math.round(yogaLayout.height)}px (wrong)`
-  document.getElementById('yoga-nodes')!.textContent = `${overlaps} wrong bboxes`
+  document.getElementById('yoga-time')!.textContent = `Height: ${Math.round(yogaLayout.height)}px (estimated)`
+  document.getElementById('yoga-nodes')!.textContent = `${heightErrors} wrong heights`
   document.getElementById('textura-time')!.textContent = `Layout: ${wmLastLayoutTime.toFixed(2)}ms`
   document.getElementById('textura-nodes')!.textContent = `Height: ${Math.round(texturaLayout.height)}px`
 
   document.getElementById('stat-overlap')!.textContent = `${overlaps}`
   document.getElementById('stat-height-diff')!.textContent = `${Math.round(heightDiff)}px`
   document.getElementById('stat-resize-time')!.textContent = `${wmLastLayoutTime.toFixed(2)}ms`
-  document.getElementById('stat-dom-time')!.textContent = `${Math.round(yogaAgentDist)}px`
+  document.getElementById('stat-dom-time')!.textContent = `${wmGenCount}`
 
-  document.getElementById('wm-drift')!.textContent = `${Math.round(yogaAgentDist)}px`
+  document.getElementById('wm-generated')!.textContent = `${wmGenCount}`
   document.getElementById('wm-layout-time')!.textContent = `${wmLastLayoutTime.toFixed(2)}ms`
-  document.getElementById('wm-bbox-errors')!.textContent = `${overlaps}`
-  document.getElementById('wm-waypoint')!.textContent = `${wmWaypointIdx + 1}/${wmWaypoints.length}`
+  document.getElementById('wm-bbox-errors')!.textContent = `${heightErrors}`
+  document.getElementById('wm-total-drift')!.textContent = `${totalHeightDrift}px`
 
   document.getElementById('insight-text')!.innerHTML = insights['worldmodel']
 }
 
-function worldModelLoop() {
-  renderWorldModel()
-  wmAnimId = requestAnimationFrame(worldModelLoop)
+function resetWorldModel() {
+  wmSeed = 1
+  wmGenCount = 0
 }
 
 function startWorldModel() {
   document.getElementById('worldmodel-bar')!.classList.add('active')
   const btn = document.getElementById('wm-btn')!
 
-  if (wmAnimId !== null) {
+  if (wmGenerateInterval !== null) {
     stopWorldModel()
     return
   }
@@ -3212,17 +3152,28 @@ function startWorldModel() {
   resetWorldModel()
   btn.textContent = 'Stop'
   btn.classList.add('running')
-  worldModelLoop()
+
+  // Generate first immediately
+  wmSeed = 1
+  wmGenCount = 1
+  renderWorldModel()
+
+  // Then auto-generate new rooms
+  wmGenerateInterval = setInterval(() => {
+    wmSeed++
+    wmGenCount++
+    renderWorldModel()
+  }, 1500)
 }
 
 function stopWorldModel() {
-  if (wmAnimId !== null) {
-    cancelAnimationFrame(wmAnimId)
-    wmAnimId = null
+  if (wmGenerateInterval !== null) {
+    clearInterval(wmGenerateInterval)
+    wmGenerateInterval = null
   }
   const btn = document.getElementById('wm-btn')
   if (btn) {
-    btn.textContent = 'Run Agent'
+    btn.textContent = 'Generate Rooms'
     btn.classList.remove('running')
   }
 }
