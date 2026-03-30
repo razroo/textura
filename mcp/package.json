@@ -1,6 +1,6 @@
 {
   "name": "@razroo/textura-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server for Textura — AI-powered layout analysis, validation, and auto-fix",
   "license": "MIT",
   "type": "module",

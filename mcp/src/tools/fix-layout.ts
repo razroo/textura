@@ -92,6 +92,15 @@ function applyFix(tree: LayoutNode, issue: LayoutIssue): Fix | null {
       break
     }
 
+    case 'overflow': {
+      // Add flexWrap to allow children to wrap instead of overflowing
+      if (!('flexWrap' in node)) {
+        (node as AnyNode).flexWrap = 'wrap'
+        return { path: issue.path, issue: issue.message, action: 'Added flexWrap: wrap to prevent horizontal overflow' }
+      }
+      break
+    }
+
     case 'overlap': {
       // Try adding flexWrap to the parent
       const parentPath = issue.path.split(' ∩ ')[0]!

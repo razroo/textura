@@ -3,7 +3,7 @@ import type { LayoutNode, ComputedLayout } from 'textura'
 
 export interface LayoutIssue {
   severity: 'error' | 'warning'
-  type: 'text-overflow' | 'touch-target' | 'overlap' | 'zero-size' | 'line-height' | 'spacing'
+  type: 'text-overflow' | 'touch-target' | 'overlap' | 'zero-size' | 'line-height' | 'spacing' | 'overflow'
   path: string
   message: string
   details: Record<string, unknown>
@@ -74,8 +74,8 @@ function detectIssues(
     }
   }
 
-  // Touch target check: interactive-sized elements (leaf boxes with small dimensions)
-  if (layout.text === undefined && layout.children.length === 0 && w > 0 && h > 0) {
+  // Touch target check: leaf elements (with or without text) with small dimensions
+  if (layout.children.length === 0 && w > 0 && h > 0) {
     if (w < minTouch || h < minTouch) {
       issues.push({
         severity: 'warning',
@@ -93,7 +93,7 @@ function detectIssues(
     if (fontMatch) {
       const fontSize = parseInt(fontMatch[1]!)
       const lineHeight = (tree as { lineHeight: number }).lineHeight
-      if (lineHeight < fontSize * 1.1) {
+      if (lineHeight <= fontSize * 1.1) {
         issues.push({
           severity: 'warning',
           type: 'line-height',
@@ -129,7 +129,7 @@ function detectIssues(
   }
 
   // Spacing check: gap too tight between children
-  if ('gap' in tree && typeof tree.gap === 'number' && tree.gap < 4 && layout.children.length > 1) {
+  if ('gap' in tree && typeof tree.gap === 'number' && tree.gap <= 4 && layout.children.length > 1) {
     issues.push({
       severity: 'warning',
       type: 'spacing',
@@ -137,6 +137,21 @@ function detectIssues(
       message: `Container at ${path} has gap ${tree.gap}px — may be too tight for readability`,
       details: { gap: tree.gap, childCount: layout.children.length },
     })
+  }
+
+  // Horizontal overflow: row children exceed parent width
+  if (layout.children.length > 1) {
+    const lastChild = layout.children[layout.children.length - 1]!
+    const childrenEnd = lastChild.x + lastChild.width
+    if (childrenEnd > w + 2) {
+      issues.push({
+        severity: 'error',
+        type: 'overflow',
+        path,
+        message: `Children overflow ${path} horizontally by ${Math.round(childrenEnd - w)}px (${layout.children.length} children need ${Math.round(childrenEnd)}px, container is ${Math.round(w)}px)`,
+        details: { childrenWidth: Math.round(childrenEnd), containerWidth: Math.round(w), overflow: Math.round(childrenEnd - w) },
+      })
+    }
   }
 
   // Recurse
