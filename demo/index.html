@@ -410,13 +410,13 @@
       color: #fff;
     }
 
-    .agent-bar {
+    .agent-bar, .worldmodel-bar {
       max-width: 1400px;
       margin: 0 auto 24px;
       padding: 0 24px;
       display: none;
     }
-    .agent-bar.active { display: block; }
+    .agent-bar.active, .worldmodel-bar.active { display: block; }
     .agent-action-log {
       display: flex;
       gap: 4px;
@@ -612,6 +612,7 @@
         <option value="synth">Synthetic UI Training Data</option>
         <option value="agent">AI Agent Environment</option>
         <option value="critic">AI Layout Critic</option>
+        <option value="worldmodel">Text World Model</option>
       </select>
     </div>
     <div class="control-group">
@@ -690,6 +691,28 @@
         <div class="vscroll-stat-label">vs Browser (~80ms)</div>
       </div>
       <div class="agent-action-log" id="agent-action-log"></div>
+    </div>
+  </div>
+
+  <div class="worldmodel-bar" id="worldmodel-bar">
+    <div class="synth-inner">
+      <button class="aistream-btn" id="wm-btn">Run Agent</button>
+      <div class="vscroll-stat">
+        <div class="vscroll-stat-value warn" id="wm-drift">0px</div>
+        <div class="vscroll-stat-label">Agent drift (Yoga vs Textura)</div>
+      </div>
+      <div class="vscroll-stat">
+        <div class="vscroll-stat-value good" id="wm-layout-time">—</div>
+        <div class="vscroll-stat-label">Layout time</div>
+      </div>
+      <div class="vscroll-stat">
+        <div class="vscroll-stat-value warn" id="wm-bbox-errors">0</div>
+        <div class="vscroll-stat-label">Wrong bounding boxes</div>
+      </div>
+      <div class="vscroll-stat">
+        <div class="vscroll-stat-value good" id="wm-waypoint">1/8</div>
+        <div class="vscroll-stat-label">Waypoint</div>
+      </div>
     </div>
   </div>
 

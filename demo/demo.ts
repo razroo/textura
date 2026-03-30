@@ -280,8 +280,8 @@ const scrollMessages: Message[] = Array.from({ length: VSCROLL_ITEM_COUNT }, (_,
   time: `${9 + Math.floor((i * 3) % 12)}:${String((i * 7) % 60).padStart(2, '0')}`,
 }))
 
-type ScenarioKey = 'chat' | 'cards' | 'i18n' | 'article' | 'stress' | 'morph' | 'vscroll' | 'editor' | 'aistream' | 'synth' | 'agent' | 'critic'
-const builders: Record<Exclude<ScenarioKey, 'vscroll' | 'editor' | 'aistream' | 'synth' | 'agent' | 'critic'>, (w: number, fs: number) => BoxNode> = {
+type ScenarioKey = 'chat' | 'cards' | 'i18n' | 'article' | 'stress' | 'morph' | 'vscroll' | 'editor' | 'aistream' | 'synth' | 'agent' | 'critic' | 'worldmodel'
+const builders: Record<Exclude<ScenarioKey, 'vscroll' | 'editor' | 'aistream' | 'synth' | 'agent' | 'critic' | 'worldmodel'>, (w: number, fs: number) => BoxNode> = {
   chat: buildChatTree, cards: buildCardsTree, i18n: buildI18nTree,
   article: buildArticleTree, stress: buildStressTree, morph: buildMorphTree,
 }
@@ -423,7 +423,7 @@ function renderLayout(
   const isAvatar = !isText && layout.children.length === 0 && w >= 20 && w <= 36 && h >= 20 && h <= 36
 
   // Card background
-  if (hasCardStyle && (scenario === 'chat' || scenario === 'i18n' || scenario === 'stress' || scenario === 'morph' || scenario === 'aistream' || scenario === 'synth' || scenario === 'agent' || scenario === 'critic')) {
+  if (hasCardStyle && (scenario === 'chat' || scenario === 'i18n' || scenario === 'stress' || scenario === 'morph' || scenario === 'aistream' || scenario === 'synth' || scenario === 'agent' || scenario === 'critic' || scenario === 'worldmodel')) {
     ctx.fillStyle = palette.card
     roundRect(ctx, x, y, w, h, 6)
     ctx.fill()
@@ -616,6 +616,9 @@ const insights: Record<ScenarioKey, string> = {
 
   morph: `<p><strong>This is the demo neither ${yogaLink} nor ${pretextLink} can do alone.</strong> A complete dashboard UI is being continuously re-laid-out at 60fps as the width sweeps from 320px to 900px and back. Every single frame: ${yogaLink} computes the flex layout, ${pretextLink} measures all text at the new available widths, boxes resize, cards reflow from 1 to 2 to 3 columns — all in under 1ms.</p>
 <p><strong>${yogaLink} alone</strong> (left) can compute the flex layout but has to guess text heights. Watch the red overflow zones — text spills out of its boxes at every width, and the errors compound as cards reflow. <strong>${pretextLink} alone</strong> can measure text but has no layout engine — it can't compute where boxes go. <strong>The DOM</strong> can't do this at 60fps — continuous relayout triggers synchronous reflow on every frame, dropping to 15–20fps on complex layouts. Only Textura combines both engines to make this possible.</p>`,
+
+  worldmodel: `<p><strong>Text-based world models need accurate spatial geometry.</strong> A "world model" built from text — where walls, signs, and obstacles are text strings with physical dimensions — requires precise bounding boxes for collision physics. The agent (green circle) navigates a room of text obstacles. Watch both canvases: the agent follows the <em>same velocity</em> but collides against <em>different bounding boxes</em>.</p>
+<p>On the left, ${yogaLink} estimates text heights with a characters-per-line heuristic. Multi-line signs and labels get wrong heights — gaps that should be passable become blocked, walls that should be solid get clipped through. On the right, Textura measures every text node accurately, so collision boundaries match the actual text. <strong>Accurate text measurement = accurate physics = a correct world model.</strong> This matters for training spatial AI agents on text-defined environments without a browser.</p>`,
 }
 
 // ── DOM measurement for comparison ─────────────────────────────
@@ -673,7 +676,7 @@ function measureWithDOM(tree: BoxNode | TextNode, containerWidth: number, fontSi
 
 function render() {
   const scenario = scenarioSelect.value as ScenarioKey
-  if (scenario === 'vscroll' || scenario === 'editor' || scenario === 'aistream' || scenario === 'synth' || scenario === 'agent' || scenario === 'critic') return
+  if (scenario === 'vscroll' || scenario === 'editor' || scenario === 'aistream' || scenario === 'synth' || scenario === 'agent' || scenario === 'critic' || scenario === 'worldmodel') return
   const containerWidth = parseInt(widthSlider.value)
   const fontSize = parseInt(fontSlider.value)
 
@@ -2839,9 +2842,394 @@ function drawFpsOverlay(ctx: CanvasRenderingContext2D, panelW: number, frameTime
   ctx.restore()
 }
 
+// ── Text World Model ─────────────────────────────────────────
+
+let wmAnimId: number | null = null
+let wmContainerWidth = 440
+let wmLastLayoutTime = 0
+
+// Agent state — one per canvas, driven by same input but different collision
+interface WmAgent {
+  x: number
+  y: number
+  vx: number
+  vy: number
+}
+let wmAgentYoga: WmAgent = { x: 60, y: 60, vx: 0, vy: 0 }
+let wmAgentTextura: WmAgent = { x: 60, y: 60, vx: 0, vy: 0 }
+
+// Waypoints the agent follows
+const wmWaypoints = [
+  { x: 60, y: 60 },
+  { x: 340, y: 60 },
+  { x: 340, y: 200 },
+  { x: 120, y: 280 },
+  { x: 60, y: 400 },
+  { x: 300, y: 400 },
+  { x: 300, y: 140 },
+  { x: 60, y: 200 },
+]
+let wmWaypointIdx = 0
+const WM_AGENT_RADIUS = 8
+const WM_AGENT_SPEED = 1.5
+
+function buildWorldModelTree(w: number, fontSize: number): BoxNode {
+  const f = (bold = false) => `${bold ? '700 ' : ''}${fontSize}px Inter`
+  const lh = Math.round(fontSize * 1.5)
+  const smLh = Math.round((fontSize - 2) * 1.5)
+
+  return {
+    width: w, flexDirection: 'column', padding: 12, gap: 0,
+    children: [
+      // Top wall
+      { text: '████████████████████████████████████████████████████', font: f(true), lineHeight: lh } satisfies TextNode,
+      // Room content
+      {
+        flexDirection: 'row', gap: 0,
+        children: [
+          // Left wall
+          { text: '██\n██\n██\n██\n██\n██\n██\n██\n██\n██\n██\n██\n██\n██', font: f(true), lineHeight: lh, whiteSpace: 'pre-wrap' as const } satisfies TextNode,
+          // Room interior
+          {
+            flexDirection: 'column', flexGrow: 1, flexShrink: 1, padding: 10, gap: 14,
+            children: [
+              // Row 1: Bookshelf and sign
+              {
+                flexDirection: 'row', gap: 20,
+                children: [
+                  {
+                    flexDirection: 'column', padding: 8, gap: 4,
+                    children: [
+                      { text: 'BOOKSHELF', font: f(true), lineHeight: lh } satisfies TextNode,
+                      { text: 'Ancient texts, rare manuscripts, and forbidden knowledge line these dusty shelves', font: `${fontSize - 2}px Inter`, lineHeight: smLh } satisfies TextNode,
+                    ],
+                  } satisfies BoxNode,
+                  {
+                    flexDirection: 'column', padding: 8, gap: 4,
+                    children: [
+                      { text: 'WELCOME SIGN', font: f(true), lineHeight: lh } satisfies TextNode,
+                      { text: 'Please browse quietly. Return all items to their designated locations before leaving.', font: `${fontSize - 2}px Inter`, lineHeight: smLh } satisfies TextNode,
+                    ],
+                  } satisfies BoxNode,
+                ],
+              } satisfies BoxNode,
+              // Row 2: Narrow corridor with gap
+              {
+                flexDirection: 'row', gap: 8,
+                children: [
+                  { text: '████████████', font: f(true), lineHeight: lh } satisfies TextNode,
+                  // Gap — agent must fit through here
+                  { width: 40 } satisfies BoxNode,
+                  { text: '████████████', font: f(true), lineHeight: lh } satisfies TextNode,
+                ],
+              } satisfies BoxNode,
+              // Row 3: Table and reading nook
+              {
+                flexDirection: 'row', gap: 20,
+                children: [
+                  {
+                    flexDirection: 'column', padding: 8, gap: 4,
+                    children: [
+                      { text: 'STUDY TABLE', font: f(true), lineHeight: lh } satisfies TextNode,
+                      { text: 'A heavy oak table covered in maps, scrolls, and half-finished equations', font: `${fontSize - 2}px Inter`, lineHeight: smLh } satisfies TextNode,
+                    ],
+                  } satisfies BoxNode,
+                  {
+                    flexDirection: 'column', padding: 8, gap: 4,
+                    children: [
+                      { text: 'READING NOOK', font: f(true), lineHeight: lh } satisfies TextNode,
+                      { text: 'A cozy alcove with cushions. The lamp flickers as wind whistles through cracks in the stone.', font: `${fontSize - 2}px Inter`, lineHeight: smLh } satisfies TextNode,
+                    ],
+                  } satisfies BoxNode,
+                ],
+              } satisfies BoxNode,
+              // Row 4: Another corridor
+              {
+                flexDirection: 'row', gap: 8,
+                children: [
+                  { text: '██████', font: f(true), lineHeight: lh } satisfies TextNode,
+                  { width: 50 } satisfies BoxNode,
+                  { text: '██████████████', font: f(true), lineHeight: lh } satisfies TextNode,
+                ],
+              } satisfies BoxNode,
+              // Row 5: Exit area
+              {
+                flexDirection: 'row', gap: 16,
+                children: [
+                  {
+                    flexDirection: 'column', padding: 8, gap: 4,
+                    children: [
+                      { text: 'EXIT', font: f(true), lineHeight: lh } satisfies TextNode,
+                      { text: 'Through the archway, torchlight reveals a descending spiral staircase', font: `${fontSize - 2}px Inter`, lineHeight: smLh } satisfies TextNode,
+                    ],
+                  } satisfies BoxNode,
+                  {
+                    flexDirection: 'column', padding: 8, gap: 4,
+                    children: [
+                      { text: 'TREASURY', font: f(true), lineHeight: lh } satisfies TextNode,
+                      { text: 'DO NOT ENTER — restricted area. Authorized personnel only beyond this point.', font: `${fontSize - 2}px Inter`, lineHeight: smLh } satisfies TextNode,
+                    ],
+                  } satisfies BoxNode,
+                ],
+              } satisfies BoxNode,
+            ],
+          } satisfies BoxNode,
+          // Right wall
+          { text: '██\n██\n██\n██\n██\n██\n██\n██\n██\n██\n██\n██\n██\n██', font: f(true), lineHeight: lh, whiteSpace: 'pre-wrap' as const } satisfies TextNode,
+        ],
+      } satisfies BoxNode,
+      // Bottom wall
+      { text: '████████████████████████████████████████████████████', font: f(true), lineHeight: lh } satisfies TextNode,
+    ],
+  }
+}
+
+// Extract all solid bounding boxes from a computed layout (text nodes + padded containers)
+function extractCollisionBoxes(layout: ComputedLayout, tree: BoxNode | TextNode, px: number, py: number): { x: number; y: number; w: number; h: number }[] {
+  const boxes: { x: number; y: number; w: number; h: number }[] = []
+  const x = px + layout.x
+  const y = py + layout.y
+
+  if (layout.text !== undefined) {
+    // Text nodes are solid obstacles
+    boxes.push({ x, y, w: layout.width, h: layout.height })
+  } else {
+    // Recurse into children
+    const children = ('children' in tree) ? (tree as BoxNode).children ?? [] : []
+    for (let i = 0; i < layout.children.length; i++) {
+      if (children[i]) {
+        boxes.push(...extractCollisionBoxes(layout.children[i]!, children[i]!, x, y))
+      }
+    }
+  }
+  return boxes
+}
+
+// Circle-AABB collision resolution
+function resolveCircleAABB(agent: WmAgent, boxes: { x: number; y: number; w: number; h: number }[]): void {
+  for (const box of boxes) {
+    // Find closest point on AABB to circle center
+    const closestX = Math.max(box.x, Math.min(agent.x, box.x + box.w))
+    const closestY = Math.max(box.y, Math.min(agent.y, box.y + box.h))
+    const dx = agent.x - closestX
+    const dy = agent.y - closestY
+    const distSq = dx * dx + dy * dy
+
+    if (distSq < WM_AGENT_RADIUS * WM_AGENT_RADIUS) {
+      const dist = Math.sqrt(distSq)
+      if (dist === 0) {
+        // Agent center is inside the box — push out to nearest edge
+        const toLeft = agent.x - box.x
+        const toRight = (box.x + box.w) - agent.x
+        const toTop = agent.y - box.y
+        const toBottom = (box.y + box.h) - agent.y
+        const minDist = Math.min(toLeft, toRight, toTop, toBottom)
+        if (minDist === toLeft) agent.x = box.x - WM_AGENT_RADIUS
+        else if (minDist === toRight) agent.x = box.x + box.w + WM_AGENT_RADIUS
+        else if (minDist === toTop) agent.y = box.y - WM_AGENT_RADIUS
+        else agent.y = box.y + box.h + WM_AGENT_RADIUS
+      } else {
+        const overlap = WM_AGENT_RADIUS - dist
+        agent.x += (dx / dist) * overlap
+        agent.y += (dy / dist) * overlap
+      }
+    }
+  }
+}
+
+function resetWorldModel() {
+  wmAgentYoga = { x: 60, y: 60, vx: 0, vy: 0 }
+  wmAgentTextura = { x: 60, y: 60, vx: 0, vy: 0 }
+  wmWaypointIdx = 0
+}
+
+function stepWorldModelAgent(agent: WmAgent, boxes: { x: number; y: number; w: number; h: number }[]) {
+  // Move toward current waypoint
+  const target = wmWaypoints[wmWaypointIdx % wmWaypoints.length]!
+  const dx = target.x - agent.x
+  const dy = target.y - agent.y
+  const dist = Math.sqrt(dx * dx + dy * dy)
+
+  if (dist < 5) return // close enough
+
+  agent.vx = (dx / dist) * WM_AGENT_SPEED
+  agent.vy = (dy / dist) * WM_AGENT_SPEED
+  agent.x += agent.vx
+  agent.y += agent.vy
+
+  // Resolve collisions
+  resolveCircleAABB(agent, boxes)
+}
+
+function renderWorldModel() {
+  const fontSize = parseInt(fontSlider.value)
+  const w = wmContainerWidth
+  const tree = buildWorldModelTree(w, fontSize)
+
+  const t0 = performance.now()
+  const texturaLayout = computeLayout(tree, { width: w })
+  wmLastLayoutTime = performance.now() - t0
+
+  const { layout: yogaLayout } = yogaLayoutTree(tree, w, fontSize)
+
+  const maxHeight = Math.max(texturaLayout.height, yogaLayout.height, 300)
+  const canvasH = Math.min(maxHeight + 40, 800)
+
+  const ctxY = setupCanvas(canvasYoga, canvasH)
+  const ctxT = setupCanvas(canvasTextura, canvasH)
+  const panelW = canvasYoga.clientWidth
+  const offsetX = Math.max(0, (panelW - w) / 2)
+
+  // Background
+  ctxY.fillStyle = '#0a0a0f'
+  ctxY.fillRect(0, 0, panelW, canvasH)
+  ctxT.fillStyle = '#0a0a0f'
+  ctxT.fillRect(0, 0, panelW, canvasH)
+
+  // Extract collision boxes
+  const yogaBoxes = extractCollisionBoxes(yogaLayout, tree, offsetX, 10)
+  const texturaBoxes = extractCollisionBoxes(texturaLayout, tree, offsetX, 10)
+
+  // Step agents
+  stepWorldModelAgent(wmAgentYoga, yogaBoxes)
+  stepWorldModelAgent(wmAgentTextura, texturaBoxes)
+
+  // Advance waypoint if both agents are close or stuck
+  const target = wmWaypoints[wmWaypointIdx % wmWaypoints.length]!
+  const dT = Math.sqrt((wmAgentTextura.x - target.x) ** 2 + (wmAgentTextura.y - target.y) ** 2)
+  if (dT < 5) {
+    wmWaypointIdx = (wmWaypointIdx + 1) % wmWaypoints.length
+  }
+
+  // Draw collision boxes (obstacles)
+  function drawObstacles(ctx: CanvasRenderingContext2D, boxes: { x: number; y: number; w: number; h: number }[], isYoga: boolean) {
+    for (const box of boxes) {
+      ctx.fillStyle = isYoga ? '#1e293b80' : '#1e293b80'
+      ctx.fillRect(box.x, box.y, box.w, box.h)
+      ctx.strokeStyle = isYoga ? '#fb923c40' : '#4ade8040'
+      ctx.lineWidth = 1
+      ctx.strokeRect(box.x, box.y, box.w, box.h)
+    }
+  }
+
+  drawObstacles(ctxY, yogaBoxes, true)
+  drawObstacles(ctxT, texturaBoxes, false)
+
+  // Render text on top of obstacles
+  renderLayout(ctxY, yogaLayout, tree, offsetX, 10, 'worldmodel', true)
+  renderLayout(ctxT, texturaLayout, tree, offsetX, 10, 'worldmodel', false)
+
+  // Draw collision box outlines more visibly
+  function drawCollisionOutlines(ctx: CanvasRenderingContext2D, boxes: { x: number; y: number; w: number; h: number }[], isYoga: boolean) {
+    ctx.setLineDash([3, 3])
+    for (const box of boxes) {
+      ctx.strokeStyle = isYoga ? '#fb923c60' : '#4ade8060'
+      ctx.lineWidth = 1
+      ctx.strokeRect(box.x, box.y, box.w, box.h)
+    }
+    ctx.setLineDash([])
+  }
+
+  drawCollisionOutlines(ctxY, yogaBoxes, true)
+  drawCollisionOutlines(ctxT, texturaBoxes, false)
+
+  // Draw agents
+  function drawAgent(ctx: CanvasRenderingContext2D, agent: WmAgent, isYoga: boolean) {
+    // Trail
+    ctx.beginPath()
+    ctx.arc(agent.x, agent.y, WM_AGENT_RADIUS + 3, 0, Math.PI * 2)
+    ctx.fillStyle = isYoga ? '#fb923c15' : '#4ade8015'
+    ctx.fill()
+
+    // Agent circle
+    ctx.beginPath()
+    ctx.arc(agent.x, agent.y, WM_AGENT_RADIUS, 0, Math.PI * 2)
+    ctx.fillStyle = isYoga ? '#fb923c' : '#4ade80'
+    ctx.fill()
+    ctx.strokeStyle = isYoga ? '#fff' : '#fff'
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+
+    // Direction indicator
+    ctx.beginPath()
+    ctx.arc(agent.x + agent.vx * 3, agent.y + agent.vy * 3, 2, 0, Math.PI * 2)
+    ctx.fillStyle = '#fff'
+    ctx.fill()
+  }
+
+  drawAgent(ctxY, wmAgentYoga, true)
+  drawAgent(ctxT, wmAgentTextura, false)
+
+  // Draw waypoint target
+  const wp = wmWaypoints[wmWaypointIdx % wmWaypoints.length]!
+  for (const ctx of [ctxY, ctxT]) {
+    ctx.beginPath()
+    ctx.arc(wp.x, wp.y, 4, 0, Math.PI * 2)
+    ctx.strokeStyle = '#ffffff40'
+    ctx.lineWidth = 1
+    ctx.setLineDash([2, 2])
+    ctx.stroke()
+    ctx.setLineDash([])
+  }
+
+  // Stats
+  const overlaps = countOverlaps(yogaLayout, tree, ctxY)
+  const heightDiff = Math.abs(texturaLayout.height - yogaLayout.height)
+  const yogaAgentDist = Math.sqrt((wmAgentYoga.x - wmAgentTextura.x) ** 2 + (wmAgentYoga.y - wmAgentTextura.y) ** 2)
+
+  document.getElementById('yoga-time')!.textContent = `Height: ${Math.round(yogaLayout.height)}px (wrong)`
+  document.getElementById('yoga-nodes')!.textContent = `${overlaps} wrong bboxes`
+  document.getElementById('textura-time')!.textContent = `Layout: ${wmLastLayoutTime.toFixed(2)}ms`
+  document.getElementById('textura-nodes')!.textContent = `Height: ${Math.round(texturaLayout.height)}px`
+
+  document.getElementById('stat-overlap')!.textContent = `${overlaps}`
+  document.getElementById('stat-height-diff')!.textContent = `${Math.round(heightDiff)}px`
+  document.getElementById('stat-resize-time')!.textContent = `${wmLastLayoutTime.toFixed(2)}ms`
+  document.getElementById('stat-dom-time')!.textContent = `${Math.round(yogaAgentDist)}px`
+
+  document.getElementById('wm-drift')!.textContent = `${Math.round(yogaAgentDist)}px`
+  document.getElementById('wm-layout-time')!.textContent = `${wmLastLayoutTime.toFixed(2)}ms`
+  document.getElementById('wm-bbox-errors')!.textContent = `${overlaps}`
+  document.getElementById('wm-waypoint')!.textContent = `${wmWaypointIdx + 1}/${wmWaypoints.length}`
+
+  document.getElementById('insight-text')!.innerHTML = insights['worldmodel']
+}
+
+function worldModelLoop() {
+  renderWorldModel()
+  wmAnimId = requestAnimationFrame(worldModelLoop)
+}
+
+function startWorldModel() {
+  document.getElementById('worldmodel-bar')!.classList.add('active')
+  const btn = document.getElementById('wm-btn')!
+
+  if (wmAnimId !== null) {
+    stopWorldModel()
+    return
+  }
+
+  resetWorldModel()
+  btn.textContent = 'Stop'
+  btn.classList.add('running')
+  worldModelLoop()
+}
+
+function stopWorldModel() {
+  if (wmAnimId !== null) {
+    cancelAnimationFrame(wmAnimId)
+    wmAnimId = null
+  }
+  const btn = document.getElementById('wm-btn')
+  if (btn) {
+    btn.textContent = 'Run Agent'
+    btn.classList.remove('running')
+  }
+}
+
 // ── Routing ───────────────────────────────────────────────────
 
-const validScenarios = new Set<ScenarioKey>(['chat', 'cards', 'i18n', 'article', 'stress', 'morph', 'vscroll', 'editor', 'aistream', 'synth', 'agent', 'critic'])
+const validScenarios = new Set<ScenarioKey>(['chat', 'cards', 'i18n', 'article', 'stress', 'morph', 'vscroll', 'editor', 'aistream', 'synth', 'agent', 'critic', 'worldmodel'])
 
 function getScenarioFromHash(): ScenarioKey | null {
   const hash = location.hash.replace('#', '')
@@ -2861,10 +3249,12 @@ function activateScenario(scenario: ScenarioKey) {
   stopSynth()
   stopAgent()
   stopCritic()
+  stopWorldModel()
   document.getElementById('aistream-bar')!.classList.remove('active')
   document.getElementById('synth-bar')!.classList.remove('active')
   document.getElementById('agent-bar')!.classList.remove('active')
   document.getElementById('critic-bar')!.classList.remove('active')
+  document.getElementById('worldmodel-bar')!.classList.remove('active')
 
   if (scenario === 'morph') {
     widthSlider.disabled = true
@@ -2918,6 +3308,13 @@ function activateScenario(scenario: ScenarioKey) {
     criticIssues = analyzeCriticIssues(criticBrokenTree, computeLayout(criticBrokenTree, { width: cw }), cw, fs)
     criticFixIdx = 0
     renderCritic()
+  } else if (scenario === 'worldmodel') {
+    widthSlider.disabled = false
+    widthSlider.style.opacity = '1'
+    document.getElementById('worldmodel-bar')!.classList.add('active')
+    wmContainerWidth = parseInt(widthSlider.value)
+    resetWorldModel()
+    renderWorldModel()
   } else {
     widthSlider.disabled = false
     widthSlider.style.opacity = '1'
@@ -2968,6 +3365,9 @@ widthSlider.addEventListener('input', () => {
     renderAgent()
   } else if (scenarioSelect.value === 'critic') {
     renderCritic()
+  } else if (scenarioSelect.value === 'worldmodel') {
+    wmContainerWidth = parseInt(widthSlider.value)
+    renderWorldModel()
   } else {
     render()
   }
@@ -2980,6 +3380,7 @@ fontSlider.addEventListener('input', () => {
   if (scenarioSelect.value === 'synth') { generateOneSynth(); renderSynth(); return }
   if (scenarioSelect.value === 'agent') { renderAgent(); return }
   if (scenarioSelect.value === 'critic') { renderCritic(); return }
+  if (scenarioSelect.value === 'worldmodel') { renderWorldModel(); return }
   if (scenarioSelect.value === 'vscroll') {
     const w = parseInt(widthSlider.value)
     const fs = parseInt(fontSlider.value)
@@ -3002,6 +3403,7 @@ window.addEventListener('resize', () => {
   if (scenarioSelect.value === 'synth') { renderSynth(); return }
   if (scenarioSelect.value === 'agent') { renderAgent(); return }
   if (scenarioSelect.value === 'critic') { renderCritic(); return }
+  if (scenarioSelect.value === 'worldmodel') { renderWorldModel(); return }
   render()
 })
 
@@ -3056,3 +3458,6 @@ document.getElementById('agent-btn')!.addEventListener('click', startAgent)
 
 // Critic button
 document.getElementById('critic-btn')!.addEventListener('click', startCritic)
+
+// World model button
+document.getElementById('wm-btn')!.addEventListener('click', startWorldModel)
