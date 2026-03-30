@@ -1,5 +1,5 @@
 {
-  "name": "@textura/mcp",
+  "name": "@razroo/textura-mcp",
   "version": "0.1.0",
   "description": "MCP server for Textura — AI-powered layout analysis, validation, and auto-fix",
   "license": "MIT",

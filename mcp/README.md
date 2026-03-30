@@ -1,4 +1,4 @@
-# @textura/mcp
+# @razroo/textura-mcp
 
 MCP server for Textura — gives AI agents layout vision. Compute exact pixel geometry, detect layout issues, validate responsive breakpoints, and auto-fix problems, all without a browser.
 
@@ -29,7 +29,7 @@ Add to your project's `.mcp.json` (or `~/.claude/settings.json` for global):
   "mcpServers": {
     "textura": {
       "command": "npx",
-      "args": ["-y", "@textura/mcp"]
+      "args": ["-y", "@razroo/textura-mcp"]
     }
   }
 }
@@ -42,7 +42,7 @@ Add to your project's `.mcp.json` (or `~/.claude/settings.json` for global):
   "mcpServers": {
     "textura": {
       "command": "npx",
-      "args": ["-y", "@textura/mcp"]
+      "args": ["-y", "@razroo/textura-mcp"]
     }
   }
 }
