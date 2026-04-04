@@ -1,3 +1,11 @@
+# ⚠️ THIS REPO HAS MOVED
+
+## **Textura now lives in the [Geometra monorepo](https://github.com/razroo/geometra/tree/main/packages/textura).**
+
+### All future development, issues, and pull requests should go there.
+
+---
+
 # Textura
 
 **[Live Demo & Interactive Examples](https://razroo.github.io/textura/)**
